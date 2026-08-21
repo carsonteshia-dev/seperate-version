@@ -1,15 +1,6 @@
 -- ====================================================================
--- FASTFLAG SYSTEM: DEDUPED QUINE AUTO-EXECUTE & CALIBRATED JUMP ENGINE
+-- FASTFLAG SYSTEM: CONTROLLED INJECTION & PERSISTENT QUINE AUTO-EXECUTE
 -- ====================================================================
-
--- Prevent duplicate thread stacking in current environment
-if _G.MainScriptLoaded then
-    -- Clean previous run if re-executed
-    if _G.CleanupPreviousRun then
-        pcall(_G.CleanupPreviousRun)
-    end
-end
-_G.MainScriptLoaded = true
 
 -- Services
 local Players = game:GetService("Players")
@@ -32,18 +23,18 @@ local APPLIED_MARKER = "ZoneStraps/.applied"
 if not isfolder("ZoneStraps") then pcall(function() makefolder("ZoneStraps") end) end
 if not isfile(FFLAGS_FILE) then pcall(function() writefile(FFLAGS_FILE, "{}") end) end
 
--- Session State
-_G.FastFlagsApplied = true
-if getgenv then getgenv().FastFlagsApplied = true end
+-- Session Gating: strictly dormant until operator presses Inject in UI
+_G.FastFlagsApplied = false
+if getgenv then getgenv().FastFlagsApplied = false end
 
 local function areFlagsApplied()
     if _G.FastFlagsApplied == true then return true end
     if getgenv and getgenv().FastFlagsApplied == true then return true end
-    return true
+    return false
 end
 
 -- ====================================================================
--- 1. FASTFLAG ENGINE INJECTION
+-- 1. FASTFLAG ENGINE INJECTION ROUTINE
 -- ====================================================================
 local function ApplyFlagToEngine(name, value)
     local valStr = tostring(value)
@@ -51,23 +42,8 @@ local function ApplyFlagToEngine(name, value)
     pcall(function() if setflag then setflag(name, valStr) end end)
 end
 
--- Auto-apply saved flags on load
-pcall(function()
-    if isfile(FFLAGS_FILE) then
-        local cnt = readfile(FFLAGS_FILE)
-        if cnt and cnt ~= "" then
-            local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
-            if ok and type(dec) == "table" then
-                for f, v in pairs(dec) do
-                    if type(f) == "string" then ApplyFlagToEngine(f, v) end
-                end
-            end
-        end
-    end
-end)
-
 -- ====================================================================
--- 2. PURE LOCAL QUINE AUTO-EXECUTE ENGINE (ZERO PRINTS / DEDUPED)
+-- 2. PURE LOCAL QUINE AUTO-EXECUTE ENGINE (TELEPORT PERSISTENT / ZERO PRINTS)
 -- ====================================================================
 local quineTemplate = [==[
 local s = %q
@@ -104,13 +80,14 @@ pcall(function()
 end)
 
 -- =======================================================
--- GAMEPLAY & METAMETHOD MASK LOGIC
+-- PERSISTENT GAMEPLAY, DPAD MASK & BOOST ENGINE (NO UI)
 -- =======================================================
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
 local FFLAGS_FILE = "ZoneStraps/FFlags.json"
+local APPLIED_MARKER = "ZoneStraps/.applied"
 local TARGET_KEY = Enum.KeyCode.DPadUp
 local boostEnabled = true
 
@@ -118,7 +95,12 @@ local BOOST_DELAY = 0.04
 local BOOST_FORCE_REGULAR = 5.6
 local BOOST_FORCE_STACK   = 12.0
 
-if isfile and isfile(FFLAGS_FILE) then
+local function areFlagsActive()
+    return isfile and isfile(APPLIED_MARKER)
+end
+
+-- Apply stored FastFlags on rejoin
+if areFlagsActive() and isfile(FFLAGS_FILE) then
     local cnt = readfile(FFLAGS_FILE)
     if cnt and cnt ~= "" then
         local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
@@ -142,7 +124,7 @@ pcall(function()
         oldIndex = hookmetamethod(game, "__index", function(self, key)
             if typeof(self) == "Instance" and self:IsA("InputObject") and key == "KeyCode" then
                 local rk = oldIndex(self, key)
-                if rk == TARGET_KEY and not (checkcaller and checkcaller()) then
+                if rk == TARGET_KEY and not (checkcaller and checkcaller()) and areFlagsActive() then
                     return Enum.KeyCode.Unknown
                 end
             end
@@ -153,7 +135,7 @@ pcall(function()
             local method = getnamecallmethod()
             local args = {...}
 
-            if self == UserInputService and not (checkcaller and checkcaller()) then
+            if self == UserInputService and not (checkcaller and checkcaller()) and areFlagsActive() then
                 if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
                     return false
                 elseif method == "GetKeysPressed" or method == "GetGamepadState" then
@@ -209,7 +191,7 @@ local function hookChar(char)
     end))
 
     local function doJump()
-        if not boostEnabled or not hrp or not hrp.Parent then return end
+        if not areFlagsActive() or not boostEnabled or not hrp or not hrp.Parent then return end
         local now = tick()
         if (now - lastJmp) < 0.2 then return end
         lastJmp = now
@@ -261,29 +243,20 @@ if LocalPlayer.Character then hookChar(LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(hookChar)
 ]==]
 
--- Register Quine Auto-Execute Payload
 local fullQuineSource = string.format(quineTemplate, quineTemplate)
 
-local q = queue_on_teleport 
-       or (syn and syn.queue_on_teleport) 
-       or (fluxus and fluxus.queue_on_teleport) 
-       or (getgenv and getgenv().queue_on_teleport)
-       or queueonteleport 
+local function armTeleportPersistence()
+    local q = queue_on_teleport 
+           or (syn and syn.queue_on_teleport) 
+           or (fluxus and fluxus.queue_on_teleport) 
+           or (getgenv and getgenv().queue_on_teleport)
+           or queueonteleport 
        or queue_for_teleport
 
-if q then
-    pcall(function()
-        q(fullQuineSource)
-    end)
+    if q then
+        pcall(function() q(fullQuineSource) end)
+    end
 end
-
-pcall(function()
-    LocalPlayer.OnTeleport:Connect(function()
-        if q then
-            pcall(function() q(fullQuineSource) end)
-        end
-    end)
-end)
 
 -- ====================================================================
 -- 3. CURRENT SESSION METAMETHOD MASK & JUMP ENGINE
@@ -320,758 +293,4 @@ pcall(function()
                 if not isOurThread and areFlagsApplied() then
                     if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
                         return false
-                    elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-                        local keys = oldNamecall(self, ...)
-                        local filtered = {}
-                        for _, inputObj in ipairs(keys) do
-                            if inputObj.KeyCode ~= TARGET_KEY then
-                                table.insert(filtered, inputObj)
-                            end
-                        end
-                        return filtered
-                    end
-                end
-            end
-
-            return oldNamecall(self, ...)
-        end)
-    end
-end)
-
-local currentHumanoid = nil
-local currentRootPart = nil
-local characterConnections = {}
-
--- Calibrated forces (-0.4 on regular, +0.5 on stack)
-local BOOST_DELAY = 0.04
-local BOOST_FORCE_REGULAR = 5.6
-local BOOST_FORCE_STACK   = 12.0
-
-local lastJumpExecution = 0
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    local k = input.KeyCode
-    if oldIndex then
-        pcall(function() k = oldIndex(input, "KeyCode") end)
-    end
-
-    if k == TARGET_KEY 
-        or k == Enum.KeyCode.LeftControl 
-        or k == Enum.KeyCode.RightControl then
-        
-        boostEnabled = not boostEnabled
-    end
-end)
-
-local function cleanupCharacter()
-    for _, connection in ipairs(characterConnections) do
-        if connection then
-            connection:Disconnect()
-        end
-    end
-    characterConnections = {}
-    currentHumanoid = nil
-    currentRootPart = nil
-end
-
-_G.CleanupPreviousRun = cleanupCharacter
-
-local function setupCharacter(char)
-    if not char then return end
-    cleanupCharacter()
-
-    local humanoid = char:WaitForChild("Humanoid", 5)
-    local root = char:WaitForChild("HumanoidRootPart", 5)
-
-    if not humanoid or not root then return end
-
-    currentHumanoid = humanoid
-    currentRootPart = root
-
-    humanoid.AutoRotate = true
-    humanoid.PlatformStand = false
-
-    local boostReady = true
-    local wasLocked = (UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter)
-
-    table.insert(characterConnections, RunService.RenderStepped:Connect(function()
-        local isLocked = (UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter)
-        if wasLocked and not isLocked then
-            boostReady = true
-        end
-        wasLocked = isLocked
-    end))
-
-    local function executeJump()
-        if not boostEnabled or not root or not root.Parent then return end
-        
-        local now = tick()
-        if (now - lastJumpExecution) < 0.2 then return end
-        lastJumpExecution = now
-
-        local isMovingBackwards = false
-        local camera = workspace.CurrentCamera
-        if camera then
-            local camLook = camera.CFrame.LookVector
-            local flatCamLook = Vector3.new(camLook.X, 0, camLook.Z)
-            local moveDir = humanoid.MoveDirection
-            local flatMove = Vector3.new(moveDir.X, 0, moveDir.Z)
-            
-            if flatCamLook.Magnitude > 0.05 and flatMove.Magnitude > 0.05 then
-                local dot = flatMove.Unit:Dot(flatCamLook.Unit)
-                if dot < -0.5 then
-                    isMovingBackwards = true
-                end
-            end
-        end
-
-        local sDown = UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down)
-        if sDown then isMovingBackwards = true end
-
-        local isStacked = (isMovingBackwards and boostReady)
-        if isStacked then boostReady = false end
-
-        local forceToAdd = isStacked and BOOST_FORCE_STACK or BOOST_FORCE_REGULAR
-
-        task.delay(BOOST_DELAY, function()
-            if root and root.Parent then
-                root.AssemblyLinearVelocity = Vector3.new(
-                    root.AssemblyLinearVelocity.X,
-                    root.AssemblyLinearVelocity.Y + forceToAdd,
-                    root.AssemblyLinearVelocity.Z
-                )
-            end
-        end)
-    end
-
-    table.insert(characterConnections, humanoid.StateChanged:Connect(function(_, newState)
-        if newState == Enum.HumanoidStateType.Landed then
-            boostReady = true
-        elseif newState == Enum.HumanoidStateType.Jumping then
-            executeJump()
-        end
-    end))
-
-    table.insert(characterConnections, humanoid.Jumping:Connect(function(active)
-        if active then
-            executeJump()
-        end
-    end))
-
-    table.insert(characterConnections, UserInputService.JumpRequest:Connect(function()
-        executeJump()
-    end))
-end
-
-if LocalPlayer.Character then
-    setupCharacter(LocalPlayer.Character)
-end
-
-LocalPlayer.CharacterAdded:Connect(setupCharacter)
-
--- ====================================================================
--- 4. LOCAL UI (RED & YELLOW THEME - MANUAL INJECTION INTERFACE)
--- ====================================================================
-local oldUi = CoreGui:FindFirstChild("FastFlagManager")
-if oldUi then oldUi:Destroy() end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "FastFlagManager"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-pcall(function() ScreenGui.Parent = CoreGui end)
-if not ScreenGui.Parent then
-    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
-    if playerGui then ScreenGui.Parent = playerGui end
-end
-
--- Palette
-local C = {
-    Bg = Color3.fromRGB(24, 14, 16),
-    TBar = Color3.fromRGB(34, 16, 20),
-    Red = Color3.fromRGB(220, 38, 38),
-    DarkRed = Color3.fromRGB(153, 27, 27),
-    Yellow = Color3.fromRGB(250, 204, 21),
-    DarkYellow = Color3.fromRGB(202, 138, 4),
-    EditorBg = Color3.fromRGB(18, 10, 12),
-    TxtDark = Color3.fromRGB(254, 242, 242),
-    TxtYellow = Color3.fromRGB(253, 224, 71),
-    TxtGray = Color3.fromRGB(180, 140, 145),
-    TxtWhite = Color3.fromRGB(255, 255, 255),
-    BtnBg = Color3.fromRGB(42, 20, 24),
-    CBoxBg = Color3.fromRGB(30, 16, 18),
-    Border = Color3.fromRGB(185, 28, 28),
-    YellowBorder = Color3.fromRGB(234, 179, 8),
-    StatGreen = Color3.fromRGB(34, 197, 94),
-    StatRed = Color3.fromRGB(239, 68, 68)
-}
-
-local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 560, 0, 380)
-Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-Main.AnchorPoint = Vector2.new(0.5, 0.5)
-Main.BackgroundColor3 = C.Bg
-Main.BorderSizePixel = 0
-Main.Parent = ScreenGui
-
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Thickness = 1
-MainStroke.Color = C.Border
-MainStroke.Parent = Main
-
-local UiScale = Instance.new("UIScale")
-UiScale.Scale = 0.75
-UiScale.Parent = Main
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 8)
-MainCorner.Parent = Main
-
-local SideLine = Instance.new("Frame")
-SideLine.Size = UDim2.new(0, 3, 1, 0)
-SideLine.BackgroundColor3 = C.Yellow
-SideLine.BorderSizePixel = 0
-SideLine.Parent = Main
-
-local SideCorner = Instance.new("UICorner")
-SideCorner.CornerRadius = UDim.new(0, 2)
-SideCorner.Parent = SideLine
-
-local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, -3, 0, 36)
-TopBar.Position = UDim2.new(0, 3, 0, 0)
-TopBar.BackgroundColor3 = C.TBar
-TopBar.BorderSizePixel = 0
-TopBar.Parent = Main
-
-local TopDivider = Instance.new("Frame")
-TopDivider.Size = UDim2.new(1, 0, 0, 1)
-TopDivider.Position = UDim2.new(0, 0, 1, -1)
-TopDivider.BackgroundColor3 = C.Border
-TopDivider.BorderSizePixel = 0
-TopDivider.Parent = TopBar
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(0, 180, 1, 0)
-Title.Position = UDim2.new(0, 15, 0, 0)
-Title.BackgroundTransparency = 1
-Title.Text = "FastFlag Manager"
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 14
-Title.TextColor3 = C.TxtYellow
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = TopBar
-
-local TopRight = Instance.new("Frame")
-TopRight.Size = UDim2.new(0, 200, 1, 0)
-TopRight.Position = UDim2.new(1, -210, 0, 0)
-TopRight.BackgroundTransparency = 1
-TopRight.Parent = TopBar
-
-local TRLayout = Instance.new("UIListLayout")
-TRLayout.FillDirection = Enum.FillDirection.Horizontal
-TRLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-TRLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-TRLayout.Padding = UDim.new(0, 6)
-TRLayout.Parent = TopRight
-
-local function MakeCircleBtn(text, order)
-    local Btn = Instance.new("TextButton")
-    Btn.Size = UDim2.new(0, 20, 0, 20)
-    Btn.BackgroundColor3 = C.BtnBg
-    Btn.BorderSizePixel = 0
-    Btn.Text = text
-    Btn.Font = Enum.Font.GothamBold
-    Btn.TextSize = 11
-    Btn.TextColor3 = C.TxtYellow
-    Btn.LayoutOrder = order
-    Btn.Parent = TopRight
-    
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 4)
-    c.Parent = Btn
-
-    local s = Instance.new("UIStroke")
-    s.Thickness = 1
-    s.Color = C.Border
-    s.Parent = Btn
-    return Btn
-end
-
-local MinBtn = MakeCircleBtn("—", 1)
-local ClsBtn = MakeCircleBtn("✕", 2)
-
-local ListLabel = Instance.new("TextLabel")
-ListLabel.Size = UDim2.new(0, 160, 0, 18)
-ListLabel.Position = UDim2.new(0, 20, 0, 44)
-ListLabel.BackgroundTransparency = 1
-ListLabel.Text = "ACTIVE FLAGS OVERVIEW"
-ListLabel.Font = Enum.Font.GothamBold
-ListLabel.TextSize = 10
-ListLabel.TextColor3 = C.TxtYellow
-ListLabel.TextXAlignment = Enum.TextXAlignment.Left
-ListLabel.Parent = Main
-
-local FlagScroll = Instance.new("ScrollingFrame")
-FlagScroll.Size = UDim2.new(1, -24, 1, -134)
-FlagScroll.Position = UDim2.new(0, 18, 0, 66)
-FlagScroll.BackgroundColor3 = C.EditorBg
-FlagScroll.BorderSizePixel = 0
-FlagScroll.ScrollBarThickness = 4
-FlagScroll.ScrollBarImageColor3 = C.Yellow
-FlagScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-FlagScroll.Parent = Main
-
-local FCorner = Instance.new("UICorner")
-FCorner.CornerRadius = UDim.new(0, 6)
-FCorner.Parent = FlagScroll
-
-local FlagScrollStroke = Instance.new("UIStroke")
-FlagScrollStroke.Thickness = 1
-FlagScrollStroke.Color = C.Border
-FlagScrollStroke.Parent = FlagScroll
-
-local FLayout = Instance.new("UIListLayout")
-FLayout.SortOrder = Enum.SortOrder.LayoutOrder
-FLayout.Padding = UDim.new(0, 2)
-FLayout.Parent = FlagScroll
-
-local function AddFlag(flagKey, flagVal)
-    if type(flagKey) ~= "string" then return end
-    local R = Instance.new("Frame")
-    R.Size = UDim2.new(1, -8, 0, 26)
-    R.BackgroundTransparency = 1
-    R.Parent = FlagScroll
-
-    local Dot = Instance.new("Frame")
-    Dot.Size = UDim2.new(0, 6, 0, 6)
-    Dot.Position = UDim2.new(0, 8, 0.5, -3)
-    Dot.BorderSizePixel = 0
-    Dot.Parent = R
-    
-    local dCorner = Instance.new("UICorner")
-    dCorner.CornerRadius = UDim.new(1, 0)
-    dCorner.Parent = Dot
-    Dot.BackgroundColor3 = C.Yellow
-
-    local Lbl = Instance.new("TextLabel")
-    Lbl.Size = UDim2.new(1, -24, 1, 0)
-    Lbl.Position = UDim2.new(0, 22, 0, 0)
-    Lbl.BackgroundTransparency = 1
-    Lbl.Text = flagKey .. " = " .. tostring(flagVal)
-    Lbl.Font = Enum.Font.Code
-    Lbl.TextSize = 11
-    Lbl.TextColor3 = C.TxtDark
-    Lbl.TextXAlignment = Enum.TextXAlignment.Left
-    Lbl.Parent = R
-end
-
-local function RefreshList()
-    for _, x in ipairs(FlagScroll:GetChildren()) do
-        if x:IsA("Frame") then x:Destroy() end
-    end
-    local cnt = ""
-    pcall(function() cnt = readfile(FFLAGS_FILE) end)
-    if cnt and cnt ~= "" then
-        local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
-        if ok and type(dec) == "table" then
-            for k, v in pairs(dec) do
-                if type(k) == "string" then AddFlag(k, v) end
-            end
-        end
-    end
-    FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 10)
-end
-
-RefreshList()
-FLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 10)
-end)
-
-local BotBar = Instance.new("Frame")
-BotBar.Size = UDim2.new(1, -24, 0, 32)
-BotBar.Position = UDim2.new(0, 18, 1, -42)
-BotBar.BackgroundTransparency = 1
-BotBar.Parent = Main
-
-local BL = Instance.new("UIListLayout")
-BL.FillDirection = Enum.FillDirection.Horizontal
-BL.SortOrder = Enum.SortOrder.LayoutOrder
-BL.Padding = UDim.new(0, 6)
-BL.Parent = BotBar
-
-local function MakeBtn(txt, w, accent)
-    local B = Instance.new("TextButton")
-    B.Size = UDim2.new(0, w, 1, 0)
-    B.BackgroundColor3 = accent and C.Red or C.BtnBg
-    B.BorderSizePixel = 0
-    B.Text = txt
-    B.Font = Enum.Font.GothamBold
-    B.TextSize = 11
-    B.TextColor3 = accent and C.TxtYellow or C.TxtDark
-    B.Parent = BotBar
-    
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 5)
-    c.Parent = B
-    
-    local btnStk = Instance.new("UIStroke")
-    btnStk.Thickness = 1
-    btnStk.Color = accent and C.YellowBorder or C.Border
-    btnStk.Parent = B
-    return B
-end
-
-local InjectBtn = MakeBtn("Inject", 90, true)
-local ImportBtn = MakeBtn("Import JSON", 90, false)
-local EditBtn = MakeBtn("Edit Flags", 90, false)
-local ClearBtn = MakeBtn("Clear", 70, false)
-local WipeBtn = MakeBtn("Close UI", 80, false)
-
-local function MakePanel(w, h)
-    local P = Instance.new("Frame")
-    P.Size = UDim2.new(0, w, 0, h)
-    P.Position = UDim2.new(0.5, 0, 0.5, 0)
-    P.AnchorPoint = Vector2.new(0.5, 0.5)
-    P.BackgroundColor3 = C.TBar
-    P.BorderSizePixel = 0
-    P.Visible = false
-    P.ZIndex = 10
-    P.Parent = Main
-    
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 6)
-    c.Parent = P
-    
-    local stk = Instance.new("UIStroke")
-    stk.Thickness = 1
-    stk.Color = C.YellowBorder
-    stk.Parent = P
-    return P
-end
-
-local ImportPanel = MakePanel(360, 180)
-local ImpBox = Instance.new("TextBox")
-ImpBox.Size = UDim2.new(1, -24, 1, -80)
-ImpBox.Position = UDim2.new(0, 12, 0, 36)
-ImpBox.BackgroundColor3 = C.CBoxBg
-ImpBox.BorderSizePixel = 0
-ImpBox.MultiLine = true
-ImpBox.PlaceholderText = 'Paste raw JSON here...\nExample:\n{\n  "FIntSimDefaultFluidForceEnabled": "999",\n  "FFlagDebugDisplayFPS": "True"\n}'
-ImpBox.Text = ""
-ImpBox.Font = Enum.Font.Code
-ImpBox.TextSize = 11
-ImpBox.TextColor3 = C.TxtDark
-ImpBox.PlaceholderColor3 = C.TxtGray
-ImpBox.TextXAlignment = Enum.TextXAlignment.Left
-ImpBox.TextYAlignment = Enum.TextYAlignment.Top
-ImpBox.Parent = ImportPanel
-
-local ImpBoxCorner = Instance.new("UICorner")
-ImpBoxCorner.CornerRadius = UDim.new(0, 4)
-ImpBoxCorner.Parent = ImpBox
-
-local ImpBoxStroke = Instance.new("UIStroke")
-ImpBoxStroke.Thickness = 1
-ImpBoxStroke.Color = C.Border
-ImpBoxStroke.Parent = ImpBox
-
-local ImpCancel = Instance.new("TextButton")
-ImpCancel.Size = UDim2.new(0, 70, 0, 24)
-ImpCancel.Position = UDim2.new(1, -160, 1, -32)
-ImpCancel.BackgroundColor3 = C.BtnBg
-ImpCancel.BorderSizePixel = 0
-ImpCancel.Text = "Cancel"
-ImpCancel.Font = Enum.Font.GothamMedium
-ImpCancel.TextSize = 11
-ImpCancel.TextColor3 = C.TxtDark
-ImpCancel.Parent = ImportPanel
-
-local ImpCancelCorner = Instance.new("UICorner")
-ImpCancelCorner.CornerRadius = UDim.new(0, 4)
-ImpCancelCorner.Parent = ImpCancel
-
-local ImpCancelStroke = Instance.new("UIStroke")
-ImpCancelStroke.Thickness = 1
-ImpCancelStroke.Color = C.Border
-ImpCancelStroke.Parent = ImpCancel
-
-local ImpSave = Instance.new("TextButton")
-ImpSave.Size = UDim2.new(0, 70, 0, 24)
-ImpSave.Position = UDim2.new(1, -80, 1, -32)
-ImpSave.BackgroundColor3 = C.Red
-ImpSave.BorderSizePixel = 0
-ImpSave.Text = "Import"
-ImpSave.Font = Enum.Font.GothamBold
-ImpSave.TextSize = 11
-ImpSave.TextColor3 = C.TxtYellow
-ImpSave.Parent = ImportPanel
-
-local ImpSaveCorner = Instance.new("UICorner")
-ImpSaveCorner.CornerRadius = UDim.new(0, 4)
-ImpSaveCorner.Parent = ImpSave
-
-local ImpSaveStroke = Instance.new("UIStroke")
-ImpSaveStroke.Thickness = 1
-ImpSaveStroke.Color = C.YellowBorder
-ImpSaveStroke.Parent = ImpSave
-
-local EditPanel = MakePanel(420, 340)
-local SearchBox = Instance.new("TextBox")
-SearchBox.Size = UDim2.new(1, -24, 0, 26)
-SearchBox.Position = UDim2.new(0, 12, 0, 38)
-SearchBox.BackgroundColor3 = C.CBoxBg
-SearchBox.PlaceholderText = "Search active flags..."
-SearchBox.Font = Enum.Font.GothamMedium
-SearchBox.TextSize = 11
-SearchBox.TextColor3 = C.TxtDark
-SearchBox.PlaceholderColor3 = C.TxtGray
-SearchBox.Parent = EditPanel
-
-local SearchCorner = Instance.new("UICorner")
-SearchCorner.CornerRadius = UDim.new(0, 4)
-SearchCorner.Parent = SearchBox
-
-local SearchStroke = Instance.new("UIStroke")
-SearchStroke.Thickness = 1
-SearchStroke.Color = C.Border
-SearchStroke.Parent = SearchBox
-
-local EditScroll = Instance.new("ScrollingFrame")
-EditScroll.Size = UDim2.new(1, -24, 1, -120)
-EditScroll.Position = UDim2.new(0, 12, 0, 70)
-EditScroll.BackgroundColor3 = C.EditorBg
-EditScroll.BorderSizePixel = 0
-EditScroll.ScrollBarThickness = 4
-EditScroll.ScrollBarImageColor3 = C.Yellow
-EditScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-EditScroll.Parent = EditPanel
-
-local EditCorner = Instance.new("UICorner")
-EditCorner.CornerRadius = UDim.new(0, 4)
-EditCorner.Parent = EditScroll
-
-local EditStk = Instance.new("UIStroke")
-EditStk.Thickness = 1
-EditStk.Color = C.Border
-EditStk.Parent = EditScroll
-
-local EL = Instance.new("UIListLayout")
-EL.SortOrder = Enum.SortOrder.LayoutOrder
-EL.Padding = UDim.new(0, 3)
-EL.Parent = EditScroll
-
-local function AddEditRow(flagKey, flagVal)
-    if type(flagKey) ~= "string" then return end
-    local R = Instance.new("Frame")
-    R.Size = UDim2.new(1, -8, 0, 30)
-    R.BackgroundTransparency = 1
-    R.Parent = EditScroll
-
-    local Nm = Instance.new("TextLabel")
-    Nm.Size = UDim2.new(0, 160, 1, 0)
-    Nm.Position = UDim2.new(0, 6, 0, 0)
-    Nm.BackgroundTransparency = 1
-    Nm.Text = flagKey
-    Nm.Font = Enum.Font.Code
-    Nm.TextSize = 11
-    Nm.TextColor3 = C.TxtDark
-    Nm.TextXAlignment = Enum.TextXAlignment.Left
-    Nm.Parent = R
-
-    local ValBox = Instance.new("TextBox")
-    ValBox.Size = UDim2.new(0, 70, 1, -6)
-    ValBox.Position = UDim2.new(0, 170, 0.5, -12)
-    ValBox.BackgroundColor3 = C.CBoxBg
-    ValBox.Text = tostring(flagVal)
-    ValBox.Font = Enum.Font.Code
-    ValBox.TextSize = 11
-    ValBox.TextColor3 = C.TxtYellow
-    ValBox.Parent = R
-    
-    local vCorner = Instance.new("UICorner")
-    vCorner.CornerRadius = UDim.new(0, 3)
-    vCorner.Parent = ValBox
-
-    local vStroke = Instance.new("UIStroke")
-    vStroke.Thickness = 1
-    vStroke.Color = C.Border
-    vStroke.Parent = ValBox
-
-    local Sv = Instance.new("TextButton")
-    Sv.Size = UDim2.new(0, 45, 1, -6)
-    Sv.Position = UDim2.new(1, -50, 0.5, -12)
-    Sv.BackgroundColor3 = C.Red
-    Sv.BorderSizePixel = 0
-    Sv.Text = "Set"
-    Sv.Font = Enum.Font.GothamBold
-    Sv.TextSize = 10
-    Sv.TextColor3 = C.TxtYellow
-    Sv.Parent = R
-    
-    local svCorner = Instance.new("UICorner")
-    svCorner.CornerRadius = UDim.new(0, 3)
-    svCorner.Parent = Sv
-
-    local svStroke = Instance.new("UIStroke")
-    svStroke.Thickness = 1
-    svStroke.Color = C.YellowBorder
-    svStroke.Parent = Sv
-
-    Sv.MouseButton1Click:Connect(function()
-        local nv = ValBox.Text
-        if tonumber(nv) then nv = tonumber(nv)
-        elseif nv:lower() == "true" then nv = true
-        elseif nv:lower() == "false" then nv = false end
-        local cnt = ""
-        pcall(function() cnt = readfile(FFLAGS_FILE) end)
-        local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
-        if ok and type(dec) == "table" then
-            dec[flagKey] = nv
-            pcall(function() writefile(FFLAGS_FILE, HttpService:JSONEncode(dec)) end)
-            ApplyFlagToEngine(flagKey, nv)
-            RefreshList()
-        end
-    end)
-end
-
-local function LoadEditPanel(srch)
-    for _, x in ipairs(EditScroll:GetChildren()) do
-        if x:IsA("Frame") then x:Destroy() end
-    end
-    local cnt = ""
-    pcall(function() cnt = readfile(FFLAGS_FILE) end)
-    if cnt and cnt ~= "" then
-        local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
-        if ok and type(dec) == "table" then
-            for k, v in pairs(dec) do
-                if type(k) == "string" and (not srch or srch == "" or string.find(string.lower(k), string.lower(srch), 1, true)) then
-                    AddEditRow(k, v)
-                end
-            end
-        end
-    end
-    EditScroll.CanvasSize = UDim2.new(0, 0, 0, EL.AbsoluteContentSize.Y + 10)
-end
-
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function() LoadEditPanel(SearchBox.Text) end)
-EL:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    EditScroll.CanvasSize = UDim2.new(0, 0, 0, EL.AbsoluteContentSize.Y + 10)
-end)
-
-local EdClose = Instance.new("TextButton")
-EdClose.Size = UDim2.new(0, 60, 0, 24)
-EdClose.Position = UDim2.new(1, -80, 1, -74)
-EdClose.BackgroundColor3 = C.BtnBg
-EdClose.BorderSizePixel = 0
-EdClose.Text = "Close"
-EdClose.Font = Enum.Font.GothamMedium
-EdClose.TextSize = 11
-EdClose.TextColor3 = C.TxtDark
-EdClose.Parent = EditPanel
-
-local edCloseCorner = Instance.new("UICorner")
-edCloseCorner.CornerRadius = UDim.new(0, 4)
-edCloseCorner.Parent = EdClose
-
-local edCloseStroke = Instance.new("UIStroke")
-edCloseStroke.Thickness = 1
-edCloseStroke.Color = C.Border
-edCloseStroke.Parent = EditPanel
-
-ClearBtn.MouseButton1Click:Connect(function()
-    pcall(function() writefile(FFLAGS_FILE, "{}") end)
-    pcall(function() if delfile and isfile(APPLIED_MARKER) then delfile(APPLIED_MARKER) end end)
-    _G.FastFlagsApplied = false
-    if getgenv then getgenv().FastFlagsApplied = false end
-    RefreshList()
-end)
-
-ImportBtn.MouseButton1Click:Connect(function()
-    ImportPanel.Visible = true
-    EditPanel.Visible = false
-    ImpBox.Text = ""
-end)
-
-EditBtn.MouseButton1Click:Connect(function()
-    EditPanel.Visible = true
-    ImportPanel.Visible = false
-    LoadEditPanel(SearchBox.Text)
-end)
-
-ImpCancel.MouseButton1Click:Connect(function() ImportPanel.Visible = false end)
-EdClose.MouseButton1Click:Connect(function() EditPanel.Visible = false end)
-
-ImpSave.MouseButton1Click:Connect(function()
-    if ImpBox.Text ~= "" then
-        local rawText = tostring(ImpBox.Text)
-        local ok = pcall(function() return HttpService:JSONDecode(rawText) end)
-        if ok then
-            pcall(function() writefile(FFLAGS_FILE, rawText) end)
-            RefreshList()
-        end
-    end
-    ImportPanel.Visible = false
-end)
-
-InjectBtn.MouseButton1Click:Connect(function()
-    local cnt = ""
-    pcall(function() cnt = readfile(FFLAGS_FILE) end)
-    if not cnt or cnt == "" then cnt = "{}" end
-    
-    local ok, dec = pcall(function() return HttpService:JSONDecode(cnt) end)
-    if ok and type(dec) == "table" then
-        for f, v in pairs(dec) do
-            if type(f) == "string" then
-                ApplyFlagToEngine(f, v)
-            end
-        end
-    end
-
-    _G.FastFlagsApplied = true
-    if getgenv then getgenv().FastFlagsApplied = true end
-    pcall(function() writefile(APPLIED_MARKER, "true") end)
-
-    RefreshList()
-    InjectBtn.Text = "Applied!"
-    task.delay(2, function() InjectBtn.Text = "Inject" end)
-end)
-
-local function Kill() pcall(function() ScreenGui:Destroy() end) end
-WipeBtn.MouseButton1Click:Connect(Kill)
-ClsBtn.MouseButton1Click:Connect(Kill)
-
-MinBtn.MouseButton1Click:Connect(function()
-    Main.Visible = not Main.Visible
-    if not Main.Visible then
-        ImportPanel.Visible = false
-        EditPanel.Visible = false
-    end
-end)
-
--- Smooth Dragging Functionality
-local drag, dInput, dStart, sPos = false, nil, nil, nil
-TopBar.InputBegan:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
-        drag = true
-        dStart = inp.Position
-        sPos = Main.Position
-        inp.Changed:Connect(function()
-            if inp.UserInputState == Enum.UserInputState.End then drag = false end
-        end)
-    end
-end)
-
-TopBar.InputChanged:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then
-        dInput = inp
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(inp)
-    if inp == dInput and drag then
-        local delta = inp.Position - dStart
-        Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / UiScale.Scale), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / UiScale.Scale))
-    end
-end)
+                    elseif method == "GetKeysPressed
