@@ -1,5 +1,5 @@
 -- ====================================================================
--- FASTFLAG SYSTEM: FULL RED & YELLOW MANAGER WITH AUTO-EXECUTE QUINE
+-- FASTFLAG SYSTEM: RED/YELLOW UI WITH DPAD-UP SINK & AUTO-EXECUTE QUINE
 -- ====================================================================
 
 -- Services
@@ -56,7 +56,7 @@ local function ApplyFlagToEngine(name, value)
 end
 
 -- ====================================================================
--- 2. VERBATIM DPAD-UP METAMETHOD MASK & SIGNAL INTERCEPTOR
+-- 2. CAS SINK, NAMECALL INTERCEPTOR, SIGNAL MASK & BOOST TOGGLE
 -- ====================================================================
 local TARGET_KEY = Enum.KeyCode.DPadUp
 local boostEnabled = true
@@ -65,73 +65,88 @@ local BOOST_DELAY = 0.04
 local BOOST_FORCE_REGULAR = 5.6
 local BOOST_FORCE_STACK   = 12.0
 
--- 1. Hook __index on InputObject (covers all scripts reading input.KeyCode)
-local oldIndex
-oldIndex = hookmetamethod(game, "__index", function(self, key)
-    if typeof(self) == "Instance" and self:IsA("InputObject") then
-        if key == "KeyCode" then
-            local realKey = oldIndex(self, key)
-            if realKey == TARGET_KEY and areFlagsApplied() then
-                return Enum.KeyCode.Unknown
+-- 1. Engine-level Sink via ContextActionService (Sinks the input & exclusively toggles boost)
+pcall(function()
+    ContextActionService:BindActionAtPriority(
+        "Sink_" .. TARGET_KEY.Name,
+        function(actionName, inputState, inputObject)
+            if inputObject.KeyCode == TARGET_KEY then
+                if inputState == Enum.UserInputState.Begin then
+                    boostEnabled = not boostEnabled
+                end
+                return Enum.ContextActionResult.Sink
             end
-        end
-    end
-    return oldIndex(self, key)
+            return Enum.ContextActionResult.Pass
+        end,
+        false,
+        2000000, -- Maximum priority level
+        TARGET_KEY
+    )
 end)
 
--- 2. Hook __namecall (covers IsKeyDown, GetKeysPressed, IsGamepadButtonDown)
+-- 2. Hook __namecall (Handles State queries & Future Signal Connections)
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
 
+    -- Intercept polling methods on UserInputService
     if self == UserInputService and areFlagsApplied() then
         if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
             return false
         elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-            local keys = oldNamecall(self, ...)
-            local filtered = {}
-            for _, inputObj in ipairs(keys) do
+            local rawList = oldNamecall(self, ...)
+            local filteredList = {}
+            for _, inputObj in ipairs(rawList) do
                 if inputObj.KeyCode ~= TARGET_KEY then
-                    table.insert(filtered, inputObj)
+                    table.insert(filteredList, inputObj)
                 end
             end
-            return filtered
+            return filteredList
+        end
+    end
+
+    -- Intercept future signal connections (.Connect and .Once)
+    if (method == "Connect" or method == "connect" or method == "Once") and typeof(self) == "RBXScriptSignal" then
+        if self == UserInputService.InputBegan or self == UserInputService.InputChanged or self == UserInputService.InputEnded then
+            local callback = args[1]
+            if typeof(callback) == "function" then
+                local wrappedCallback = function(input, gameProcessed)
+                    -- Drop the event completely if it matches the target key
+                    if areFlagsApplied() and input and input.KeyCode == TARGET_KEY then
+                        return
+                    end
+                    return callback(input, gameProcessed)
+                end
+                return oldNamecall(self, wrappedCallback)
+            end
         end
     end
 
     return oldNamecall(self, ...)
 end)
 
--- 3. Intercept existing & future signal connections on InputBegan, InputChanged, InputEnded
+-- 3. Intercept Pre-existing Signal Connections
 if getconnections then
-    local function patchSignals(signal)
-        for _, conn in pairs(getconnections(signal)) do
-            local fn = conn.Function
-            if fn then
+    local function patchExistingConnections(signal)
+        for _, conn in ipairs(getconnections(signal)) do
+            local oldFunction = conn.Function
+            if oldFunction and typeof(oldFunction) == "function" then
                 conn:Disable()
-                signal:Connect(function(input, gp)
-                    if areFlagsApplied() and input.KeyCode == TARGET_KEY then
-                        return -- drop event completely
+                signal:Connect(function(input, gameProcessed)
+                    if areFlagsApplied() and input and input.KeyCode == TARGET_KEY then
+                        return -- Drop event completely
                     end
-                    fn(input, gp)
+                    return oldFunction(input, gameProcessed)
                 end)
             end
         end
     end
 
-    patchSignals(UserInputService.InputBegan)
-    patchSignals(UserInputService.InputChanged)
-    patchSignals(UserInputService.InputEnded)
+    patchExistingConnections(UserInputService.InputBegan)
+    patchExistingConnections(UserInputService.InputChanged)
+    patchExistingConnections(UserInputService.InputEnded)
 end
-
--- Dedicated Toggle Listener for Boost
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    local k = oldIndex and oldIndex(input, "KeyCode") or input.KeyCode
-    if k == TARGET_KEY or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
-        boostEnabled = not boostEnabled
-    end
-end)
 
 -- ====================================================================
 -- 3. PURE LOCAL QUINE AUTO-EXECUTE ENGINE (PERSISTS ON TELEPORT / ZERO PRINTS)
@@ -140,8 +155,9 @@ local quineTemplate = [==[
 local s = %q
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-if _G.QuineRuntimeActive then return end
-_G.QuineRuntimeActive = true
+-- Single-instance execution guard per session
+if _G.DPadBoostAutoExecLoaded then return end
+_G.DPadBoostAutoExecLoaded = true
 
 local Players = game:GetService("Players")
 while not Players.LocalPlayer do
@@ -149,6 +165,7 @@ while not Players.LocalPlayer do
 end
 local LocalPlayer = Players.LocalPlayer
 
+-- Re-Queue Self via Local Stack Quine Engine (Zero Prints / Teleport Persistent)
 local q = queue_on_teleport 
        or (syn and syn.queue_on_teleport) 
        or (fluxus and fluxus.queue_on_teleport) 
@@ -174,6 +191,7 @@ end)
 -- AUTO-EXECUTE: FASTFLAGS, DPAD MASK & BOOST ENGINE (NO UI)
 -- =======================================================
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
@@ -207,20 +225,26 @@ if isAuthorized() and isfile(FFLAGS_FILE) then
     end
 end
 
--- Metamethod mask
-local oldIndex
-oldIndex = hookmetamethod(game, "__index", function(self, key)
-    if typeof(self) == "Instance" and self:IsA("InputObject") then
-        if key == "KeyCode" then
-            local realKey = oldIndex(self, key)
-            if realKey == TARGET_KEY and isAuthorized() then
-                return Enum.KeyCode.Unknown
+-- 1. CAS Sink & Exclusive Toggle
+pcall(function()
+    ContextActionService:BindActionAtPriority(
+        "Sink_" .. TARGET_KEY.Name,
+        function(actionName, inputState, inputObject)
+            if inputObject.KeyCode == TARGET_KEY then
+                if inputState == Enum.UserInputState.Begin then
+                    boostEnabled = not boostEnabled
+                end
+                return Enum.ContextActionResult.Sink
             end
-        end
-    end
-    return oldIndex(self, key)
+            return Enum.ContextActionResult.Pass
+        end,
+        false,
+        2000000,
+        TARGET_KEY
+    )
 end)
 
+-- 2. Hook __namecall
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
@@ -230,48 +254,58 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
             return false
         elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-            local keys = oldNamecall(self, ...)
-            local filtered = {}
-            for _, inputObj in ipairs(keys) do
+            local rawList = oldNamecall(self, ...)
+            local filteredList = {}
+            for _, inputObj in ipairs(rawList) do
                 if inputObj.KeyCode ~= TARGET_KEY then
-                    table.insert(filtered, inputObj)
+                    table.insert(filteredList, inputObj)
                 end
             end
-            return filtered
+            return filteredList
+        end
+    end
+
+    if (method == "Connect" or method == "connect" or method == "Once") and typeof(self) == "RBXScriptSignal" then
+        if self == UserInputService.InputBegan or self == UserInputService.InputChanged or self == UserInputService.InputEnded then
+            local callback = args[1]
+            if typeof(callback) == "function" then
+                local wrappedCallback = function(input, gameProcessed)
+                    if isAuthorized() and input and input.KeyCode == TARGET_KEY then
+                        return
+                    end
+                    return callback(input, gameProcessed)
+                end
+                return oldNamecall(self, wrappedCallback)
+            end
         end
     end
 
     return oldNamecall(self, ...)
 end)
 
+-- 3. Intercept Pre-existing Signal Connections
 if getconnections then
-    local function patchSignals(signal)
-        for _, conn in pairs(getconnections(signal)) do
-            local fn = conn.Function
-            if fn then
+    local function patchExistingConnections(signal)
+        for _, conn in ipairs(getconnections(signal)) do
+            local oldFunction = conn.Function
+            if oldFunction and typeof(oldFunction) == "function" then
                 conn:Disable()
-                signal:Connect(function(input, gp)
-                    if isAuthorized() and input.KeyCode == TARGET_KEY then
+                signal:Connect(function(input, gameProcessed)
+                    if isAuthorized() and input and input.KeyCode == TARGET_KEY then
                         return
                     end
-                    fn(input, gp)
+                    return oldFunction(input, gameProcessed)
                 end)
             end
         end
     end
 
-    patchSignals(UserInputService.InputBegan)
-    patchSignals(UserInputService.InputChanged)
-    patchSignals(UserInputService.InputEnded)
+    patchExistingConnections(UserInputService.InputBegan)
+    patchExistingConnections(UserInputService.InputChanged)
+    patchExistingConnections(UserInputService.InputEnded)
 end
 
-UserInputService.InputBegan:Connect(function(input)
-    local k = oldIndex and oldIndex(input, "KeyCode") or input.KeyCode
-    if k == TARGET_KEY or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
-        boostEnabled = not boostEnabled
-    end
-end)
-
+-- Jump Engine
 local lastJmp = 0
 local charConns = {}
 
