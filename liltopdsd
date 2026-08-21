@@ -1,5 +1,5 @@
 -- ====================================================================
--- FASTFLAG SYSTEM: SINGLE-INSTANCE LOCKED QUINE ENGINE & UI
+-- FASTFLAG SYSTEM: FULL RED & YELLOW MANAGER WITH AUTO-EXECUTE QUINE
 -- ====================================================================
 
 -- Services
@@ -56,7 +56,85 @@ local function ApplyFlagToEngine(name, value)
 end
 
 -- ====================================================================
--- 2. PURE LOCAL QUINE AUTO-EXECUTE ENGINE (PERSISTS ON TELEPORT / ZERO PRINTS)
+-- 2. VERBATIM DPAD-UP METAMETHOD MASK & SIGNAL INTERCEPTOR
+-- ====================================================================
+local TARGET_KEY = Enum.KeyCode.DPadUp
+local boostEnabled = true
+
+local BOOST_DELAY = 0.04
+local BOOST_FORCE_REGULAR = 5.6
+local BOOST_FORCE_STACK   = 12.0
+
+-- 1. Hook __index on InputObject (covers all scripts reading input.KeyCode)
+local oldIndex
+oldIndex = hookmetamethod(game, "__index", function(self, key)
+    if typeof(self) == "Instance" and self:IsA("InputObject") then
+        if key == "KeyCode" then
+            local realKey = oldIndex(self, key)
+            if realKey == TARGET_KEY and areFlagsApplied() then
+                return Enum.KeyCode.Unknown
+            end
+        end
+    end
+    return oldIndex(self, key)
+end)
+
+-- 2. Hook __namecall (covers IsKeyDown, GetKeysPressed, IsGamepadButtonDown)
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+
+    if self == UserInputService and areFlagsApplied() then
+        if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
+            return false
+        elseif method == "GetKeysPressed" or method == "GetGamepadState" then
+            local keys = oldNamecall(self, ...)
+            local filtered = {}
+            for _, inputObj in ipairs(keys) do
+                if inputObj.KeyCode ~= TARGET_KEY then
+                    table.insert(filtered, inputObj)
+                end
+            end
+            return filtered
+        end
+    end
+
+    return oldNamecall(self, ...)
+end)
+
+-- 3. Intercept existing & future signal connections on InputBegan, InputChanged, InputEnded
+if getconnections then
+    local function patchSignals(signal)
+        for _, conn in pairs(getconnections(signal)) do
+            local fn = conn.Function
+            if fn then
+                conn:Disable()
+                signal:Connect(function(input, gp)
+                    if areFlagsApplied() and input.KeyCode == TARGET_KEY then
+                        return -- drop event completely
+                    end
+                    fn(input, gp)
+                end)
+            end
+        end
+    end
+
+    patchSignals(UserInputService.InputBegan)
+    patchSignals(UserInputService.InputChanged)
+    patchSignals(UserInputService.InputEnded)
+end
+
+-- Dedicated Toggle Listener for Boost
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    local k = oldIndex and oldIndex(input, "KeyCode") or input.KeyCode
+    if k == TARGET_KEY or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
+        boostEnabled = not boostEnabled
+    end
+end)
+
+-- ====================================================================
+-- 3. PURE LOCAL QUINE AUTO-EXECUTE ENGINE (PERSISTS ON TELEPORT / ZERO PRINTS)
 -- ====================================================================
 local quineTemplate = [==[
 local s = %q
@@ -93,7 +171,7 @@ pcall(function()
 end)
 
 -- =======================================================
--- AUTO-EXECUTE: FASTFLAGS, DPAD MASK & CALIBRATED BOOST
+-- AUTO-EXECUTE: FASTFLAGS, DPAD MASK & BOOST ENGINE (NO UI)
 -- =======================================================
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -112,7 +190,7 @@ local function isAuthorized()
     return isfile and isfile(INJECTED_MARKER)
 end
 
--- Auto-apply FastFlags to engine
+-- Apply FastFlags
 if isAuthorized() and isfile(FFLAGS_FILE) then
     local cnt = readfile(FFLAGS_FILE)
     if cnt and cnt ~= "" then
@@ -129,49 +207,66 @@ if isAuthorized() and isfile(FFLAGS_FILE) then
     end
 end
 
--- Metamethod mask for DPad-Up
+-- Metamethod mask
 local oldIndex
-local oldNamecall
-
-pcall(function()
-    if hookmetamethod then
-        oldIndex = hookmetamethod(game, "__index", function(self, key)
-            if typeof(self) == "Instance" and self:IsA("InputObject") and key == "KeyCode" then
-                local rk = oldIndex(self, key)
-                if rk == TARGET_KEY and not (checkcaller and checkcaller()) and isAuthorized() then
-                    return Enum.KeyCode.Unknown
-                end
+oldIndex = hookmetamethod(game, "__index", function(self, key)
+    if typeof(self) == "Instance" and self:IsA("InputObject") then
+        if key == "KeyCode" then
+            local realKey = oldIndex(self, key)
+            if realKey == TARGET_KEY and isAuthorized() then
+                return Enum.KeyCode.Unknown
             end
-            return oldIndex(self, key)
-        end)
-
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-
-            if self == UserInputService and not (checkcaller and checkcaller()) and isAuthorized() then
-                if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
-                    return false
-                elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-                    local keys = oldNamecall(self, ...)
-                    local filtered = {}
-                    for _, inputObj in ipairs(keys) do
-                        if inputObj.KeyCode ~= TARGET_KEY then
-                            table.insert(filtered, inputObj)
-                        end
-                    end
-                    return filtered
-                end
-            end
-
-            return oldNamecall(self, ...)
-        end)
+        end
     end
+    return oldIndex(self, key)
 end)
 
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+
+    if self == UserInputService and isAuthorized() then
+        if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
+            return false
+        elseif method == "GetKeysPressed" or method == "GetGamepadState" then
+            local keys = oldNamecall(self, ...)
+            local filtered = {}
+            for _, inputObj in ipairs(keys) do
+                if inputObj.KeyCode ~= TARGET_KEY then
+                    table.insert(filtered, inputObj)
+                end
+            end
+            return filtered
+        end
+    end
+
+    return oldNamecall(self, ...)
+end)
+
+if getconnections then
+    local function patchSignals(signal)
+        for _, conn in pairs(getconnections(signal)) do
+            local fn = conn.Function
+            if fn then
+                conn:Disable()
+                signal:Connect(function(input, gp)
+                    if isAuthorized() and input.KeyCode == TARGET_KEY then
+                        return
+                    end
+                    fn(input, gp)
+                end)
+            end
+        end
+    end
+
+    patchSignals(UserInputService.InputBegan)
+    patchSignals(UserInputService.InputChanged)
+    patchSignals(UserInputService.InputEnded)
+end
+
 UserInputService.InputBegan:Connect(function(input)
-    local k = input.KeyCode
-    if oldIndex then pcall(function() k = oldIndex(input, "KeyCode") end) end
+    local k = oldIndex and oldIndex(input, "KeyCode") or input.KeyCode
     if k == TARGET_KEY or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
         boostEnabled = not boostEnabled
     end
@@ -273,81 +368,12 @@ local function armTeleportPersistence()
 end
 
 -- ====================================================================
--- 3. CURRENT SESSION METAMETHOD MASK & JUMP ENGINE
+-- 4. CURRENT SESSION JUMP ENGINE
 -- ====================================================================
-local TARGET_KEY = Enum.KeyCode.DPadUp
-local boostEnabled = true
-
-local oldIndex
-local oldNamecall
-
-pcall(function()
-    if hookmetamethod then
-        oldIndex = hookmetamethod(game, "__index", function(self, key)
-            if typeof(self) == "Instance" and self:IsA("InputObject") then
-                if key == "KeyCode" then
-                    local realKey = oldIndex(self, key)
-                    if realKey == TARGET_KEY then
-                        local isOurThread = checkcaller and checkcaller()
-                        if not isOurThread and areFlagsApplied() then
-                            return Enum.KeyCode.Unknown
-                        end
-                    end
-                end
-            end
-            return oldIndex(self, key)
-        end)
-
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-
-            if self == UserInputService then
-                local isOurThread = checkcaller and checkcaller()
-                if not isOurThread and areFlagsApplied() then
-                    if (method == "IsKeyDown" or method == "IsGamepadButtonDown") and args[1] == TARGET_KEY then
-                        return false
-                    elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-                        local keys = oldNamecall(self, ...)
-                        local filtered = {}
-                        for _, inputObj in ipairs(keys) do
-                            if inputObj.KeyCode ~= TARGET_KEY then
-                                table.insert(filtered, inputObj)
-                            end
-                        end
-                        return filtered
-                    end
-                end
-            end
-
-            return oldNamecall(self, ...)
-        end)
-    end
-end)
-
 local currentHumanoid = nil
 local currentRootPart = nil
 local characterConnections = {}
-
-local BOOST_DELAY = 0.04
-local BOOST_FORCE_REGULAR = 5.6
-local BOOST_FORCE_STACK   = 12.0
-
 local lastJumpExecution = 0
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    local k = input.KeyCode
-    if oldIndex then
-        pcall(function() k = oldIndex(input, "KeyCode") end)
-    end
-
-    if k == TARGET_KEY 
-        or k == Enum.KeyCode.LeftControl 
-        or k == Enum.KeyCode.RightControl then
-        
-        boostEnabled = not boostEnabled
-    end
-end)
 
 local function cleanupCharacter()
     for _, connection in ipairs(characterConnections) do
@@ -454,7 +480,7 @@ end
 LocalPlayer.CharacterAdded:Connect(setupCharacter)
 
 -- ====================================================================
--- 4. LOCAL UI (RED & YELLOW THEME - MANUAL INJECTION INTERFACE)
+-- 5. LOCAL UI (RED & YELLOW PALETTE)
 -- ====================================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "FastFlagManager"
