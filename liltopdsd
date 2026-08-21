@@ -1,5 +1,5 @@
 -- ====================================================================
--- FASTFLAG SYSTEM: WORKING TOGGLE, ISOLATED BOOST & ZERO-STACK UI
+-- FASTFLAG SYSTEM: CRASH-PROOF UNIVERSAL ENGINE & ZERO-STACK UI
 -- ====================================================================
 
 -- Services
@@ -46,7 +46,7 @@ local function isSessionActive()
 end
 
 -- ====================================================================
--- 1. ADVANCED INJECTION & PREFIX-STRIPPING ENGINE
+-- 1. CRASH-PROOF INJECTION & MERGE ENGINE
 -- ====================================================================
 local setfflagFunc = setfflag or set_fflag or (getgenv and getgenv().setfflag) or setflag or (getgenv and getgenv().setflag)
 
@@ -56,21 +56,37 @@ local function UltraCleanJSON(str)
     return str
 end
 
-local function ExecuteInjectionLogic(rawText)
+local function ExecuteInjectionLogic(rawText, shouldMerge)
     local cleanedRaw = UltraCleanJSON(rawText)
     local success, decoded = pcall(function() return HttpService:JSONDecode(cleanedRaw) end)
     
     if success and type(decoded) == "table" then
+        local finalTable = decoded
+
+        -- Non-destructive merge logic
+        if shouldMerge then
+            local existingRaw = ""
+            pcall(function() existingRaw = readfile(FFLAGS_FILE) end)
+            local okEx, existingDec = pcall(function() return HttpService:JSONDecode(existingRaw) end)
+            if okEx and type(existingDec) == "table" then
+                for k, v in pairs(decoded) do
+                    existingDec[k] = v
+                end
+                finalTable = existingDec
+            end
+        end
+
+        local encodedData = HttpService:JSONEncode(finalTable)
         if writefile then
             pcall(function()
-                writefile(FFLAGS_FILE, cleanedRaw)
+                writefile(FFLAGS_FILE, encodedData)
             end)
         end
         
         local successCount = 0
         local errorCount = 0
         
-        for flagName, val in pairs(decoded) do
+        for flagName, val in pairs(finalTable) do
             local cleanName = flagName:gsub("DFInt", ""):gsub("DFFlag", ""):gsub("FFlag", ""):gsub("FInt", ""):gsub("DFString", ""):gsub("FString", "")
             local applied = false
             
@@ -109,7 +125,7 @@ local function ExecuteInjectionLogic(rawText)
 end
 
 -- ====================================================================
--- 2. SILENT DPAD SINK & WORKING SHIFT-UNSHIFT TOGGLE
+-- 2. CRASH-PROOF DPAD SINK & SHIFT-UNSHIFT TOGGLE
 -- ====================================================================
 local TARGET_KEY = Enum.KeyCode.DPadUp
 local shiftBoostEnabled = true
@@ -118,100 +134,71 @@ local BOOST_DELAY = 0.04
 local BOOST_FORCE_REGULAR = 5.6
 local BOOST_FORCE_STACK   = 12.0
 
--- LAYER 1: Hook __index on InputObject (Captures rawIndex for unmasked lookups)
+-- LAYER 1: Safe __index hook on InputObject
 local rawIndex
 if hookmetamethod then
-    rawIndex = hookmetamethod(game, "__index", function(self, key)
-        if isSessionActive() and typeof(self) == "Instance" and self:IsA("InputObject") then
-            local realKey = rawIndex(self, "KeyCode")
-            if realKey == TARGET_KEY then
-                if key == "KeyCode" then
-                    return Enum.KeyCode.Unknown
-                elseif key == "UserInputType" then
-                    return Enum.UserInputType.None
-                elseif key == "UserInputState" then
-                    return Enum.UserInputState.None
-                elseif key == "Position" or key == "Delta" then
-                    return Vector3.new(0, 0, 0)
+    pcall(function()
+        rawIndex = hookmetamethod(game, "__index", function(self, key)
+            if isSessionActive() and typeof(self) == "Instance" and self:IsA("InputObject") then
+                local realKey = rawIndex(self, "KeyCode")
+                if realKey == TARGET_KEY then
+                    if key == "KeyCode" then
+                        return Enum.KeyCode.Unknown
+                    elseif key == "UserInputType" then
+                        return Enum.UserInputType.None
+                    elseif key == "UserInputState" then
+                        return Enum.UserInputState.None
+                    elseif key == "Position" or key == "Delta" then
+                        return Vector3.new(0, 0, 0)
+                    end
                 end
             end
-        end
-        return rawIndex(self, key)
+            return rawIndex(self, key)
+        end)
     end)
 end
 
--- Whitelisted Toggle Handler (Cannot be hooked or muted by sanitizer)
-local hookedFunctions = {}
-
-local function internalToggleHandler(input, gameProcessed)
+-- Dedicated Toggle Listener
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not isSessionActive() then return end
     local realKey = rawIndex and rawIndex(input, "KeyCode") or input.KeyCode
     if realKey == TARGET_KEY then
         shiftBoostEnabled = not shiftBoostEnabled
     end
-end
-
-hookedFunctions[internalToggleHandler] = true
-UserInputService.InputBegan:Connect(internalToggleHandler)
-
--- LAYER 2: Directly Hook Callbacks of Checker/Visualizer Scripts
-local function sanitizeSignalConnections()
-    if not getconnections then return end
-    for _, sig in ipairs({UserInputService.InputBegan, UserInputService.InputEnded, UserInputService.InputChanged}) do
-        for _, conn in ipairs(getconnections(sig)) do
-            local fn = conn.Function
-            if fn and typeof(fn) == "function" and not hookedFunctions[fn] then
-                hookedFunctions[fn] = true
-                if hookfunction then
-                    local oldFn
-                    oldFn = hookfunction(fn, function(input, gp)
-                        local rawK = rawIndex and rawIndex(input, "KeyCode") or input.KeyCode
-                        if isSessionActive() and (rawK == TARGET_KEY or input.KeyCode == TARGET_KEY) then
-                            return -- Completely silent: external script is not executed
-                        end
-                        return oldFn(input, gp)
-                    end)
-                end
-            end
-        end
-    end
-end
-
-sanitizeSignalConnections()
-pcall(function()
-    UserInputService.InputBegan:Connect(sanitizeSignalConnections)
 end)
 
--- LAYER 3: Hook __namecall (Blocks Polling Queries for DPadUp)
+-- LAYER 2: Safe __namecall hook (Blocks Polling Queries for DPadUp)
 local rawNamecall
 if hookmetamethod then
-    rawNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
+    pcall(function()
+        rawNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
 
-        if isSessionActive() and typeof(self) == "Instance" and self == UserInputService then
-            if (method == "IsKeyDown" or method == "IsGamepadButtonDown") then
-                for _, a in ipairs(args) do
-                    if a == TARGET_KEY then return false end
-                end
-            elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-                local rawList = rawNamecall(self, ...)
-                local filteredList = {}
-                for _, inputObj in ipairs(rawList) do
-                    local realK = rawIndex and rawIndex(inputObj, "KeyCode") or inputObj.KeyCode
-                    if realK ~= TARGET_KEY and realK ~= Enum.KeyCode.Unknown then
-                        table.insert(filteredList, inputObj)
+            if isSessionActive() and typeof(self) == "Instance" and self == UserInputService then
+                if (method == "IsKeyDown" or method == "IsGamepadButtonDown") then
+                    for _, a in ipairs(args) do
+                        if a == TARGET_KEY then return false end
                     end
+                elseif method == "GetKeysPressed" or method == "GetGamepadState" then
+                    local rawList = rawNamecall(self, ...)
+                    local filteredList = {}
+                    for _, inputObj in ipairs(rawList) do
+                        local realK = rawIndex and rawIndex(inputObj, "KeyCode") or inputObj.KeyCode
+                        if realK ~= TARGET_KEY and realK ~= Enum.KeyCode.Unknown then
+                            table.insert(filteredList, inputObj)
+                        end
+                    end
+                    return filteredList
                 end
-                return filteredList
             end
-        end
 
-        return rawNamecall(self, ...)
+            return rawNamecall(self, ...)
+        end)
     end)
 end
 
--- LAYER 4: ContextActionService Engine Sink (Priority 3,000,000)
+-- LAYER 3: ContextActionService Engine Sink (Priority 3,000,000)
 pcall(function()
     ContextActionService:BindActionAtPriority(
         "Sink_" .. TARGET_KEY.Name,
@@ -311,96 +298,67 @@ end
 -- Layer 1: Hook __index on InputObject
 local rawIndex
 if hookmetamethod then
-    rawIndex = hookmetamethod(game, "__index", function(self, key)
-        if typeof(self) == "Instance" and self:IsA("InputObject") then
-            local realKey = rawIndex(self, "KeyCode")
-            if realKey == TARGET_KEY then
-                if key == "KeyCode" then
-                    return Enum.KeyCode.Unknown
-                elseif key == "UserInputType" then
-                    return Enum.UserInputType.None
-                elseif key == "UserInputState" then
-                    return Enum.UserInputState.None
-                elseif key == "Position" or key == "Delta" then
-                    return Vector3.new(0, 0, 0)
+    pcall(function()
+        rawIndex = hookmetamethod(game, "__index", function(self, key)
+            if typeof(self) == "Instance" and self:IsA("InputObject") then
+                local realKey = rawIndex(self, "KeyCode")
+                if realKey == TARGET_KEY then
+                    if key == "KeyCode" then
+                        return Enum.KeyCode.Unknown
+                    elseif key == "UserInputType" then
+                        return Enum.UserInputType.None
+                    elseif key == "UserInputState" then
+                        return Enum.UserInputState.None
+                    elseif key == "Position" or key == "Delta" then
+                        return Vector3.new(0, 0, 0)
+                    end
                 end
             end
-        end
-        return rawIndex(self, key)
+            return rawIndex(self, key)
+        end)
     end)
 end
 
--- Whitelisted Toggle Listener
-local hookedFunctions = {}
-
-local function internalToggle(input)
+-- Toggle Listener
+UserInputService.InputBegan:Connect(function(input)
     local realKey = rawIndex and rawIndex(input, "KeyCode") or input.KeyCode
     if realKey == TARGET_KEY then
         shiftBoostEnabled = not shiftBoostEnabled
     end
-end
-
-hookedFunctions[internalToggle] = true
-UserInputService.InputBegan:Connect(internalToggle)
-
--- Layer 2: Directly Hook Callbacks of Checker Scripts
-local function sanitizeSignalConnections()
-    if not getconnections then return end
-    for _, sig in ipairs({UserInputService.InputBegan, UserInputService.InputEnded, UserInputService.InputChanged}) do
-        for _, conn in ipairs(getconnections(sig)) do
-            local fn = conn.Function
-            if fn and typeof(fn) == "function" and not hookedFunctions[fn] then
-                hookedFunctions[fn] = true
-                if hookfunction then
-                    local oldFn
-                    oldFn = hookfunction(fn, function(input, gp)
-                        local rawK = rawIndex and rawIndex(input, "KeyCode") or input.KeyCode
-                        if rawK == TARGET_KEY or input.KeyCode == TARGET_KEY then
-                            return
-                        end
-                        return oldFn(input, gp)
-                    end)
-                end
-            end
-        end
-    end
-end
-
-sanitizeSignalConnections()
-pcall(function()
-    UserInputService.InputBegan:Connect(sanitizeSignalConnections)
 end)
 
--- Layer 3: Hook __namecall
+-- Layer 2: Hook __namecall
 local rawNamecall
 if hookmetamethod then
-    rawNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
+    pcall(function()
+        rawNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
 
-        if typeof(self) == "Instance" and self == UserInputService then
-            if (method == "IsKeyDown" or method == "IsGamepadButtonDown") then
-                for _, a in ipairs(args) do
-                    if a == TARGET_KEY then return false end
-                end
-            elseif method == "GetKeysPressed" or method == "GetGamepadState" then
-                local rawList = rawNamecall(self, ...)
-                local filteredList = {}
-                for _, inputObj in ipairs(rawList) do
-                    local realK = rawIndex and rawIndex(inputObj, "KeyCode") or inputObj.KeyCode
-                    if realK ~= TARGET_KEY and realK ~= Enum.KeyCode.Unknown then
-                        table.insert(filteredList, inputObj)
+            if typeof(self) == "Instance" and self == UserInputService then
+                if (method == "IsKeyDown" or method == "IsGamepadButtonDown") then
+                    for _, a in ipairs(args) do
+                        if a == TARGET_KEY then return false end
                     end
+                elseif method == "GetKeysPressed" or method == "GetGamepadState" then
+                    local rawList = rawNamecall(self, ...)
+                    local filteredList = {}
+                    for _, inputObj in ipairs(rawList) do
+                        local realK = rawIndex and rawIndex(inputObj, "KeyCode") or inputObj.KeyCode
+                        if realK ~= TARGET_KEY and realK ~= Enum.KeyCode.Unknown then
+                            table.insert(filteredList, inputObj)
+                        end
+                    end
+                    return filteredList
                 end
-                return filteredList
             end
-        end
 
-        return rawNamecall(self, ...)
+            return rawNamecall(self, ...)
+        end)
     end)
 end
 
--- Layer 4: CAS Sink (Priority 3,000,000)
+-- Layer 3: CAS Sink (Priority 3,000,000)
 pcall(function()
     ContextActionService:BindActionAtPriority(
         "Sink_" .. TARGET_KEY.Name,
@@ -472,13 +430,13 @@ local function hookChar(char)
         end
 
         local isShiftUnshift = (boostReady or isBack)
-        local forceToAdd = BOOST_FORCE_REGULAR -- 5.6 ALWAYS applied for normal jumps
+        local forceToAdd = BOOST_FORCE_REGULAR
 
         if isShiftUnshift then
             if shiftBoostEnabled then
-                forceToAdd = BOOST_FORCE_STACK -- 12.0
+                forceToAdd = BOOST_FORCE_STACK
             else
-                forceToAdd = BOOST_FORCE_REGULAR -- 5.6 (Only normal jump boost when shift boost is off)
+                forceToAdd = BOOST_FORCE_REGULAR
             end
             boostReady = false
         end
@@ -602,7 +560,7 @@ local function setupCharacter(char)
         if sDown then isMovingBackwards = true end
 
         local isShiftUnshift = (boostReady or isMovingBackwards)
-        local forceToAdd = BOOST_FORCE_REGULAR -- 5.6 ALWAYS applied for normal jumps
+        local forceToAdd = BOOST_FORCE_REGULAR -- Standard jump boost always applied
 
         if isShiftUnshift then
             if shiftBoostEnabled then
@@ -1176,10 +1134,11 @@ end)
 ImpCancel.MouseButton1Click:Connect(function() ImportPanel.Visible = false end)
 EdClose.MouseButton1Click:Connect(function() EditPanel.Visible = false end)
 
+-- Non-destructive Flag Import: Merges new keys alongside previous flags
 ImpSave.MouseButton1Click:Connect(function()
     if ImpBox.Text ~= "" then
         local rawText = tostring(ImpBox.Text)
-        local ok, sCount = ExecuteInjectionLogic(rawText)
+        local ok, sCount = ExecuteInjectionLogic(rawText, true)
         if ok then
             RefreshList()
         end
@@ -1193,7 +1152,7 @@ InjectBtn.MouseButton1Click:Connect(function()
     pcall(function() cnt = readfile(FFLAGS_FILE) end)
     if not cnt or cnt == "" then cnt = "{}" end
     
-    local ok, successCount, errorCount = ExecuteInjectionLogic(cnt)
+    local ok, successCount, errorCount = ExecuteInjectionLogic(cnt, false)
 
     _G.FastFlagsInjected = true
     if getgenv then getgenv().FastFlagsInjected = true end
