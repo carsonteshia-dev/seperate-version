@@ -1,20 +1,35 @@
 -- ====================================================================
--- FASTFLAG SYSTEM: GATED INJECTION & PERSISTENT QUINE AUTO-EXECUTE
+-- FASTFLAG SYSTEM: SINGLE-INSTANCE LOCKED QUINE ENGINE & UI
 -- ====================================================================
 
 -- Services
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local ContextActionService = game:GetService("ContextActionService")
-local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
-
+local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+
+-- Single-Instance Execution Guard
+if _G.FastFlagManagerLoaded or (getgenv and getgenv().FastFlagManagerLoaded) then
+    local existingGui = CoreGui:FindFirstChild("FastFlagManager") 
+        or (LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("FastFlagManager"))
+    if existingGui then
+        local main = existingGui:FindFirstChildWhichIsA("Frame")
+        if main then main.Visible = true end
+    end
+    return
+end
+
+_G.FastFlagManagerLoaded = true
+if getgenv then getgenv().FastFlagManagerLoaded = true end
+
 while not LocalPlayer do
     task.wait()
     LocalPlayer = Players.LocalPlayer
 end
+
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 
 -- Storage Paths
 local FFLAGS_FILE = "ZoneStraps/FFlags.json"
@@ -23,7 +38,7 @@ local INJECTED_MARKER = "ZoneStraps/.injected"
 if not isfolder("ZoneStraps") then pcall(function() makefolder("ZoneStraps") end) end
 if not isfile(FFLAGS_FILE) then pcall(function() writefile(FFLAGS_FILE, "{}") end) end
 
--- Force hard reset on UI load so NOTHING runs until "Inject" is clicked
+-- Session Gating: strictly dormant until operator presses Inject in UI
 _G.FastFlagsApplied = false
 if getgenv then getgenv().FastFlagsApplied = false end
 
@@ -441,9 +456,6 @@ LocalPlayer.CharacterAdded:Connect(setupCharacter)
 -- ====================================================================
 -- 4. LOCAL UI (RED & YELLOW THEME - MANUAL INJECTION INTERFACE)
 -- ====================================================================
-local oldUi = CoreGui:FindFirstChild("FastFlagManager")
-if oldUi then oldUi:Destroy() end
-
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "FastFlagManager"
 ScreenGui.ResetOnSpawn = false
@@ -1009,7 +1021,12 @@ InjectBtn.MouseButton1Click:Connect(function()
     task.delay(2, function() InjectBtn.Text = "Inject" end)
 end)
 
-local function Kill() pcall(function() ScreenGui:Destroy() end) end
+local function Kill()
+    _G.FastFlagManagerLoaded = nil
+    if getgenv then getgenv().FastFlagManagerLoaded = nil end
+    pcall(function() ScreenGui:Destroy() end)
+end
+
 WipeBtn.MouseButton1Click:Connect(Kill)
 ClsBtn.MouseButton1Click:Connect(Kill)
 
