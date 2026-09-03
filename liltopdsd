@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - BOOST HEIGHT ENHANCED SUITE (COMPLETE & UNCUT)
+-- YB STRAP - BOOST APEX HIGH SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
@@ -226,8 +226,8 @@ local function RecordTap(tapArray, isController)
     end
 end
 
--- Enhanced curve (7.4 peak, 7-frame decay)
-local FIXED_UPWARD_CURVE = {7.4, 6.3, 5.2, 4.2, 3.2, 2.2, 1.2}
+-- High apex curve (9.5 peak, 7-frame decay)
+local FIXED_UPWARD_CURVE = {9.5, 8.2, 6.9, 5.5, 4.2, 3.0, 1.8}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
