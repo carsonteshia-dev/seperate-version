@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - STEALTH PRO FASTFLAG SUITE (COMPLETE & UNCUT)
+-- YB STRAP - STEALTH PRO SUITE (LIVE FLAG SETTER - COMPLETE & UNCUT)
 -- =========================================================================
 
 -- Root Singleton Engine Guard
@@ -812,8 +812,8 @@ CfgSaveBtn.MouseButton1Click:Connect(function()
     RefreshLists()
 end)
 
--- Live Flag Editor Modal
-local EditPanel = MakeModal(490, 310)
+-- Live Flag Editor Modal (Featuring Inline 'Set' & 'Delete' Buttons)
+local EditPanel = MakeModal(510, 320)
 New("TextLabel", {Size = UDim2.new(1, -24, 0, 22), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "FastFlag Live Editor", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, EditPanel)
 local EditSearchBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 28), Position = UDim2.new(0, 16, 0, 36), BackgroundColor3 = C.CardBg, PlaceholderText = "Search flags to edit...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, ZIndex = 21}, EditPanel, 6)
 local EditScroll = New("ScrollingFrame", {Size = UDim2.new(1, -32, 1, -120), Position = UDim2.new(0, 16, 0, 70), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.Border, ZIndex = 21}, EditPanel, 6)
@@ -829,23 +829,51 @@ local function PopulateEditList(query)
         for k, v in pairs(dec) do
             if filter == "" or k:lower():find(filter, 1, true) then
                 local row = New("Frame", {Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 22}, EditScroll, 6)
-                New("TextLabel", {Size = UDim2.new(1, -165, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = k, Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 23}, row)
-                local valBox = New("TextBox", {Size = UDim2.new(0, 80, 0, 22), Position = UDim2.new(1, -145, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 23}, row, 4)
-                valBox.FocusLost:Connect(function()
+                New("TextLabel", {Size = UDim2.new(1, -215, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = k, Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 23}, row)
+                
+                local valBox = New("TextBox", {Size = UDim2.new(0, 75, 0, 22), Position = UDim2.new(1, -195, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 23}, row, 4)
+                
+                local setBtn = New("TextButton", {Size = UDim2.new(0, 48, 0, 22), Position = UDim2.new(1, -112, 0.5, -11), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Set", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 23}, row, 4)
+                local delBtn = New("TextButton", {Size = UDim2.new(0, 48, 0, 22), Position = UDim2.new(1, -56, 0.5, -11), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Delete", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.Red, ZIndex = 23}, row, 4)
+
+                local function ApplyVal()
                     local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
-                    local num = tonumber(newText)
-                    if num ~= nil then dec[k] = num
-                    elseif newText:lower() == "true" then dec[k] = true
-                    elseif newText:lower() == "false" then dec[k] = false
-                    else dec[k] = newText end
+                    local parsedVal = tonumber(newText)
+                    if parsedVal == nil then
+                        if newText:lower() == "true" then parsedVal = true
+                        elseif newText:lower() == "false" then parsedVal = false
+                        else parsedVal = newText end
+                    end
+                    dec[k] = parsedVal
                     SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
+                    TrySetFlag(k, parsedVal)
+                    return parsedVal
+                end
+
+                valBox.FocusLost:Connect(function()
+                    ApplyVal()
                     RefreshLists()
                 end)
-                local del = New("TextButton", {Size = UDim2.new(0, 50, 0, 22), Position = UDim2.new(1, -58, 0.5, -11), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Delete", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.Red, ZIndex = 23}, row, 4)
-                del.MouseButton1Click:Connect(function()
+
+                setBtn.MouseButton1Click:Connect(function()
+                    local finalVal = ApplyVal()
+                    setBtn.Text = "Set!"
+                    setBtn.BackgroundColor3 = C.Green
+                    ShowToast("Set " .. k .. " = " .. tostring(finalVal), C.Green)
+                    task.delay(1, function()
+                        pcall(function()
+                            setBtn.Text = "Set"
+                            setBtn.BackgroundColor3 = C.Blue
+                        end)
+                    end)
+                    RefreshLists()
+                end)
+
+                delBtn.MouseButton1Click:Connect(function()
                     dec[k] = nil
                     SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
                     row:Destroy()
+                    ShowToast("Deleted " .. k, C.Red)
                     RefreshLists()
                 end)
             end
