@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - ANTI-STACKING SINGLETON SUITE (COMPLETE & UNCUT)
+-- YB STRAP - BOOST CURVE TUNED SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 -- Root Singleton Guard: Wipe any existing listeners across previous executes
@@ -191,7 +191,7 @@ if type(hookfunction) == "function" then
     end
 end
 
--- Anti-Stacking Boost Engine
+-- Tuned Anti-Stacking Boost Engine
 local shiftTaps = {}
 local l3Taps = {}
 local isArmed = false
@@ -214,7 +214,8 @@ local function RecordTap(tapArray, isController)
     end
 end
 
-local FIXED_UPWARD_CURVE = {4.6, 3.9, 3.2, 2.5, 1.8, 1.2, 0.6}
+-- Tuned sweet spot curve (5.2 peak, smooth 7-frame parabolic decay)
+local FIXED_UPWARD_CURVE = {5.2, 4.4, 3.6, 2.8, 2.0, 1.4, 0.8}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
@@ -229,7 +230,6 @@ local function GetLinearVel(part)
 end
 
 local function ExecuteBoost()
-    -- Concurrency & Session check: Prevent any duplicate instance from firing
     if _G.ShystxCurrentSession ~= thisSession or _G.ShystxIsBoosting then return end
 
     local now = os.clock()
