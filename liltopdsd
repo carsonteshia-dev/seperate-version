@@ -1,12 +1,11 @@
 -- =========================================================================
--- YB STRAP - RESTORED EQUALIZED UPWARD BOOST SUITE (COMPLETE & UNCUT)
+-- YB STRAP - VERIFIED STREAMLINED SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 local template = [==[
 local s = %q
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- Singleton Guard: Prevent connection stacking across rejoins
 if _G.ShystxSessionCleanup and type(_G.ShystxSessionCleanup) == "function" then
     pcall(_G.ShystxSessionCleanup)
 end
@@ -14,9 +13,7 @@ end
 local globalConns = {}
 _G.ShystxSessionCleanup = function()
     for _, conn in ipairs(globalConns) do
-        if conn and conn.Disconnect then
-            pcall(function() conn:Disconnect() end)
-        end
+        if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
     end
     table.clear(globalConns)
 end
@@ -36,9 +33,7 @@ local function QueueScript(code)
 end
 
 QueueScript(string.format(s, s))
-TrackConn(LocalPlayer.OnTeleport:Connect(function()
-    QueueScript(string.format(s, s))
-end))
+TrackConn(LocalPlayer.OnTeleport:Connect(function() QueueScript(string.format(s, s)) end))
 
 local setfflag = setfflag or set_fflag or setflag or set_flag
 if not setfflag and type(getgenv) == "function" then
@@ -65,10 +60,9 @@ end
 
 TrySetFlag("SimDefaultFluidForceEnabled", true)
 
--- Keymask Sanitizer
-_G.ShystxBoostEnabled = true
+-- Boost Toggle
+_G.ShystxBoostEnabled = false
 local lastToggleTime = 0
-
 local function ToggleBoost()
     local now = os.clock()
     if now - lastToggleTime < 0.2 then return end
@@ -159,15 +153,12 @@ if type(hookfunction) == "function" then
                 local args = {...}
                 for i = 1, #args do
                     local s = tostring(args[i])
-                    if HasTargetOnly(s) or s:find("Something unexpectedly tried to set the parent") then
-                        return
-                    end
+                    if HasTargetOnly(s) or s:find("Something unexpectedly tried to set the parent") then return end
                 end
                 return old(...)
             end)
         end
     end
-
     SinkPrint(getfenv(), "print")
     SinkPrint(getfenv(), "warn")
     if type(getgenv) == "function" then
@@ -186,20 +177,17 @@ TrackConn(UserInputService.InputBegan:Connect(function(input, _)
     end
 end))
 
--- =========================================================================
--- SMOOTH UPWARD BOOST ENGINE (EQUALIZED CROSS-PLATFORM)
--- =========================================================================
 local currentHumanoid = nil
 local currentRootPart = nil
 local charConns = {}
-
 local lastBoostTime = 0
 local shiftTaps = {}
 local l3Taps = {}
 local isArmed = false
+local armedByController = false
 local armedExpiration = 0
 
-local function RecordTap(tapArray)
+local function RecordTap(tapArray, isController)
     local now = os.clock()
     table.insert(tapArray, now)
     while #tapArray > 0 and (now - tapArray[1] > 0.50) do
@@ -208,11 +196,11 @@ local function RecordTap(tapArray)
     if #tapArray >= 2 then
         table.clear(tapArray)
         isArmed = true
+        armedByController = isController or false
         armedExpiration = now + 1.25
     end
 end
 
--- Tuned downward parabolic curve (buttery smooth upward glide)
 local FIXED_UPWARD_CURVE = {4.6, 3.9, 3.2, 2.5, 1.8, 1.2, 0.6}
 
 local function SetLinearVel(part, x, y, z)
@@ -252,25 +240,16 @@ local function ExecuteBoost()
     end
     if not currentRootPart or not currentHumanoid then return end
 
+    local wasController = armedByController
     isArmed = false
     lastBoostTime = now
 
-    -- Transition to Freefall so Roblox gamepad engine stops injecting sustained ButtonA jump thrust
-    pcall(function()
-        currentHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-    end)
-
     task.spawn(function()
-        task.wait(0.01)
         for i = 1, #FIXED_UPWARD_CURVE do
             if not currentRootPart or not currentRootPart.Parent or _G.ShystxBoostEnabled ~= true then break end
             local curVel = GetLinearVel(currentRootPart)
-            local currentY = curVel.Y
-            if i == 1 then
-                -- Clamp initial frame so controller and keyboard start from the exact same baseline
-                currentY = math.clamp(currentY, 25, 52)
-            end
-            SetLinearVel(currentRootPart, curVel.X, currentY + FIXED_UPWARD_CURVE[i], curVel.Z)
+            local boostVal = FIXED_UPWARD_CURVE[i] * (wasController and 0.78 or 1.0)
+            SetLinearVel(currentRootPart, curVel.X, curVel.Y + boostVal, curVel.Z)
             RunService.Heartbeat:Wait()
         end
     end)
@@ -311,9 +290,9 @@ end))
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
     if inp.KeyCode == Enum.KeyCode.LeftShift then
-        RecordTap(shiftTaps)
+        RecordTap(shiftTaps, false)
     elseif inp.KeyCode == Enum.KeyCode.ButtonL3 then
-        RecordTap(l3Taps)
+        RecordTap(l3Taps, true)
     end
 end))
 
@@ -330,7 +309,6 @@ _G.ShystxBoostEnabled = false
 -- =========================================================================
 -- ANIMATED YB STRAP GUI WITH ADVANCED FLAG EDITOR
 -- =========================================================================
-
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -357,7 +335,7 @@ local makefolder = makefolder or (type(getgenv) == "function" and getgenv().make
 local writefile = writefile or (type(getgenv) == "function" and getgenv().writefile)
 local readfile = readfile or (type(getgenv) == "function" and getgenv().readfile)
 
-_G.ShystxEngineActive = false
+_G.ShystxEngineActive = true
 _G.ShystxActiveFlagsCache = {}
 
 local virtualFiles = {}
@@ -383,13 +361,10 @@ if parentGui:FindFirstChild("yblazy_ffm") then
     pcall(function() parentGui.yblazy_ffm:Destroy() end)
 end
 
-local F_PATH = "ZoneStraps/FFlags.json"
-local CONFIGS_PATH = "ZoneStraps/Configs.json"
-
+local F_PATH, CONFIGS_PATH = "ZoneStraps/FFlags.json", "ZoneStraps/Configs.json"
 if type(isfolder) == "function" and type(makefolder) == "function" then
     pcall(function() if not isfolder("ZoneStraps") then makefolder("ZoneStraps") end end)
 end
-
 if SafeReadFile(F_PATH) == "{}" then SafeWriteFile(F_PATH, HttpService:JSONEncode({["FIntSimDefaultFluidForceEnabled"] = 1})) end
 if SafeReadFile(CONFIGS_PATH) == "{}" then SafeWriteFile(CONFIGS_PATH, "{}") end
 
@@ -402,7 +377,6 @@ local function AutoRepairJSON(rawText)
     local text = rawText:gsub("//[^\r\n]*", ""):gsub("/%*.-%*/", ""):gsub(",%s*}", "}"):gsub(",%s*]", "]")
     local ok, parsed = pcall(function() return HttpService:JSONDecode(text) end)
     if ok and type(parsed) == "table" then return parsed, HttpService:JSONEncode(parsed) end
-
     local result = {}
     for key, val in text:gmatch('["\']?([%w_%.%-]+)["\']?%s*[:=]%s*(["\']?[%w_%.%-%s]+["\']?)') do
         local cleanKey = key:gsub('["\']', ''):gsub('^%s*(.-)%s*$', '%1')
@@ -417,9 +391,7 @@ local function AutoRepairJSON(rawText)
             else result[cleanKey] = cleanVal end
         end
     end
-    local finalJson = "{}"
-    pcall(function() finalJson = HttpService:JSONEncode(result) end)
-    return result, finalJson
+    return result, HttpService:JSONEncode(result)
 end
 
 local function VerifyFlagStatus(flagName)
@@ -445,12 +417,6 @@ local function TrySetFlag(flagName, val)
     return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "yblazy_ffm"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-pcall(function() ScreenGui.Parent = parentGui end)
-
 local C = {
     Bg = Color3.fromRGB(11, 13, 18), TBar = Color3.fromRGB(16, 19, 27), Red = Color3.fromRGB(244, 63, 94),
     Blue = Color3.fromRGB(59, 130, 246), DarkBlue = Color3.fromRGB(29, 78, 216), PanelBg = Color3.fromRGB(18, 22, 31),
@@ -459,65 +425,32 @@ local C = {
     CBoxBg = Color3.fromRGB(14, 18, 25), Border = Color3.fromRGB(35, 43, 58), StatGreen = Color3.fromRGB(34, 197, 94), StatRed = Color3.fromRGB(244, 63, 94)
 }
 
+local function New(cls, props, p, rad)
+    local obj = Instance.new(cls)
+    for k, v in pairs(props or {}) do obj[k] = v end
+    if rad then Instance.new("UICorner", obj).CornerRadius = UDim.new(0, rad) end
+    if p then obj.Parent = p end
+    return obj
+end
+
 local function Tween(instance, props, dur)
     local tw = TweenService:Create(instance, TweenInfo.new(dur or 0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props)
     tw:Play()
     return tw
 end
 
-local Main = Instance.new("Frame", ScreenGui)
-Main.Size = UDim2.new(0, 590, 0, 410)
-Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-Main.AnchorPoint = Vector2.new(0.5, 0.5)
-Main.BackgroundColor3 = C.Bg
-Main.BorderSizePixel = 0
-Main.ClipsDescendants = true
-Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
-
-local stroke = Instance.new("UIStroke", Main)
-stroke.Thickness = 1.4
-stroke.Color = C.Border
-
-local UiScale = Instance.new("UIScale", Main)
-UiScale.Scale = 0.01
+local ScreenGui = New("ScreenGui", {Name = "yblazy_ffm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, parentGui)
+local Main = New("Frame", {Size = UDim2.new(0, 590, 0, 410), Position = UDim2.new(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.Bg, BorderSizePixel = 0, ClipsDescendants = true}, ScreenGui, 12)
+local stroke = New("UIStroke", {Thickness = 1.4, Color = C.Border}, Main)
+local UiScale = New("UIScale", {Scale = 0.01}, Main)
 Tween(UiScale, {Scale = 0.76}, 0.35)
 
-local TopBar = Instance.new("Frame", Main)
-TopBar.Size = UDim2.new(1, 0, 0, 44)
-TopBar.BackgroundColor3 = C.TBar
-TopBar.BorderSizePixel = 0
-
-local TitleRed = Instance.new("TextLabel", TopBar)
-TitleRed.Size = UDim2.new(0, 30, 1, 0)
-TitleRed.Position = UDim2.new(0, 16, 0, 0)
-TitleRed.BackgroundTransparency = 1
-TitleRed.Text = "yb"
-TitleRed.Font = Enum.Font.GothamBold
-TitleRed.TextSize = 15
-TitleRed.TextColor3 = C.Red
-TitleRed.TextXAlignment = Enum.TextXAlignment.Left
-
-local TitleBlue = Instance.new("TextLabel", TopBar)
-TitleBlue.Size = UDim2.new(0, 90, 1, 0)
-TitleBlue.Position = UDim2.new(0, 48, 0, 0)
-TitleBlue.BackgroundTransparency = 1
-TitleBlue.Text = "strap"
-TitleBlue.Font = Enum.Font.GothamBold
-TitleBlue.TextSize = 15
-TitleBlue.TextColor3 = C.Blue
-TitleBlue.TextXAlignment = Enum.TextXAlignment.Left
+local TopBar = New("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.TBar, BorderSizePixel = 0}, Main)
+New("TextLabel", {Size = UDim2.new(0, 30, 1, 0), Position = UDim2.new(0, 16, 0, 0), BackgroundTransparency = 1, Text = "yb", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = C.Red, TextXAlignment = Enum.TextXAlignment.Left}, TopBar)
+New("TextLabel", {Size = UDim2.new(0, 90, 1, 0), Position = UDim2.new(0, 48, 0, 0), BackgroundTransparency = 1, Text = "strap", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = C.Blue, TextXAlignment = Enum.TextXAlignment.Left}, TopBar)
 
 local function MakeHeaderBtn(txt, col, xOff)
-    local B = Instance.new("TextButton", TopBar)
-    B.Size = UDim2.new(0, 26, 0, 26)
-    B.Position = UDim2.new(1, xOff, 0.5, -13)
-    B.BackgroundColor3 = C.BtnBg
-    B.BorderSizePixel = 0
-    B.Text = txt
-    B.Font = Enum.Font.GothamBold
-    B.TextSize = 12
-    B.TextColor3 = col
-    Instance.new("UICorner", B).CornerRadius = UDim.new(0, 6)
+    local B = New("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, xOff, 0.5, -13), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = txt, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = col}, TopBar, 6)
     B.MouseEnter:Connect(function() Tween(B, {BackgroundColor3 = C.BtnHover}, 0.2) end)
     B.MouseLeave:Connect(function() Tween(B, {BackgroundColor3 = C.BtnBg}, 0.2) end)
     return B
@@ -526,168 +459,59 @@ end
 local MinBtn = MakeHeaderBtn("—", C.Blue, -66)
 local ClsBtn = MakeHeaderBtn("✕", C.Red, -34)
 
-local TabBar = Instance.new("Frame", Main)
-TabBar.Size = UDim2.new(1, -40, 0, 28)
-TabBar.Position = UDim2.new(0, 20, 0, 50)
-TabBar.BackgroundTransparency = 1
+local TabBar = New("Frame", {Size = UDim2.new(1, -40, 0, 28), Position = UDim2.new(0, 20, 0, 50), BackgroundTransparency = 1}, Main)
+local TabActiveBtn = New("TextButton", {Size = UDim2.new(0, 110, 1, 0), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Active Flags", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite}, TabBar, 6)
+local TabSavedBtn = New("TextButton", {Size = UDim2.new(0, 120, 1, 0), Position = UDim2.new(0, 118, 0, 0), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Named Configs", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtGray}, TabBar, 6)
 
-local TabActiveBtn = Instance.new("TextButton", TabBar)
-TabActiveBtn.Size = UDim2.new(0, 110, 1, 0)
-TabActiveBtn.BackgroundColor3 = C.Blue
-TabActiveBtn.BorderSizePixel = 0
-TabActiveBtn.Text = "Active Flags"
-TabActiveBtn.Font = Enum.Font.GothamBold
-TabActiveBtn.TextSize = 11
-TabActiveBtn.TextColor3 = C.TxtWhite
-Instance.new("UICorner", TabActiveBtn).CornerRadius = UDim.new(0, 6)
+local ActiveContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -165), Position = UDim2.new(0, 20, 0, 84), BackgroundTransparency = 1}, Main)
+local SavedContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -165), Position = UDim2.new(0, 20, 0, 84), BackgroundTransparency = 1, Visible = false}, Main)
 
-local TabSavedBtn = Instance.new("TextButton", TabBar)
-TabSavedBtn.Size = UDim2.new(0, 120, 1, 0)
-TabSavedBtn.Position = UDim2.new(0, 118, 0, 0)
-TabSavedBtn.BackgroundColor3 = C.BtnBg
-TabSavedBtn.BorderSizePixel = 0
-TabSavedBtn.Text = "Named Configs"
-TabSavedBtn.Font = Enum.Font.GothamBold
-TabSavedBtn.TextSize = 11
-TabSavedBtn.TextColor3 = C.TxtGray
-Instance.new("UICorner", TabSavedBtn).CornerRadius = UDim.new(0, 6)
-
-local ActiveContainer = Instance.new("Frame", Main)
-ActiveContainer.Size = UDim2.new(1, -40, 1, -165)
-ActiveContainer.Position = UDim2.new(0, 20, 0, 84)
-ActiveContainer.BackgroundTransparency = 1
-
-local SavedContainer = Instance.new("Frame", Main)
-SavedContainer.Size = UDim2.new(1, -40, 1, -165)
-SavedContainer.Position = UDim2.new(0, 20, 0, 84)
-SavedContainer.BackgroundTransparency = 1
-SavedContainer.Visible = false
-
-local FlagScroll = Instance.new("ScrollingFrame", ActiveContainer)
-FlagScroll.Size = UDim2.new(1, 0, 1, 0)
-FlagScroll.BackgroundColor3 = C.EditorBg
-FlagScroll.BorderSizePixel = 0
-FlagScroll.ScrollBarThickness = 4
-FlagScroll.ScrollBarImageColor3 = C.Border
-Instance.new("UICorner", FlagScroll).CornerRadius = UDim.new(0, 8)
-
-local FLayout = Instance.new("UIListLayout", FlagScroll)
-FLayout.Padding = UDim.new(0, 4)
-
-local ConfigScroll = Instance.new("ScrollingFrame", SavedContainer)
-ConfigScroll.Size = UDim2.new(1, 0, 1, 0)
-ConfigScroll.BackgroundColor3 = C.EditorBg
-ConfigScroll.BorderSizePixel = 0
-ConfigScroll.ScrollBarThickness = 4
-ConfigScroll.ScrollBarImageColor3 = C.Border
-Instance.new("UICorner", ConfigScroll).CornerRadius = UDim.new(0, 8)
-
-local CLayout = Instance.new("UIListLayout", ConfigScroll)
-CLayout.Padding = UDim.new(0, 4)
-
-local function AddActiveRow(k, v)
-    if k:lower():find("fluidforceenabled") then return end
-
-    local R = Instance.new("Frame", FlagScroll)
-    R.Size = UDim2.new(1, -8, 0, 28)
-    R.BackgroundColor3 = C.CBoxBg
-    R.BorderSizePixel = 0
-    Instance.new("UICorner", R).CornerRadius = UDim.new(0, 6)
-
-    local Dot = Instance.new("Frame", R)
-    Dot.Size = UDim2.new(0, 6, 0, 6)
-    Dot.Position = UDim2.new(0, 10, 0.5, -3)
-    Dot.BackgroundColor3 = VerifyFlagStatus(k) and C.StatGreen or C.StatRed
-    Dot.BorderSizePixel = 0
-    Instance.new("UICorner", Dot).CornerRadius = UDim.new(1, 0)
-
-    local Lbl = Instance.new("TextLabel", R)
-    Lbl.Size = UDim2.new(1, -20, 1, 0)
-    Lbl.Position = UDim2.new(0, 26, 0, 0)
-    Lbl.BackgroundTransparency = 1
-    Lbl.Text = k .. " = " .. tostring(v)
-    Lbl.Font = Enum.Font.Code
-    Lbl.TextSize = 11
-    Lbl.TextColor3 = C.TxtDark
-    Lbl.TextXAlignment = Enum.TextXAlignment.Left
-end
+local FlagScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.Border}, ActiveContainer, 8)
+local FLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, FlagScroll)
+local ConfigScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.Border}, SavedContainer, 8)
+local CLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, ConfigScroll)
 
 local function RefreshLists()
     for _, x in ipairs(FlagScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
     for _, x in ipairs(ConfigScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
 
     local cnt = SafeReadFile(F_PATH)
-    if cnt and cnt ~= "" then
-        local dec = AutoRepairJSON(cnt)
-        if type(dec) == "table" then
-            for k, v in pairs(dec) do if type(k) == "string" then AddActiveRow(k, v) end end
-        end
-    end
-
-    local cfgCnt = SafeReadFile(CONFIGS_PATH)
-    if cfgCnt and cfgCnt ~= "" then
-        local ok, dec = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
-        if ok and type(dec) == "table" then
-            for cfgName, flagsObj in pairs(dec) do
-                if type(cfgName) == "string" and type(flagsObj) == "table" then
-                    local count = 0
-                    for _ in pairs(flagsObj) do count = count + 1 end
-
-                    local R = Instance.new("Frame", ConfigScroll)
-                    R.Size = UDim2.new(1, -8, 0, 32)
-                    R.BackgroundColor3 = C.CBoxBg
-                    R.BorderSizePixel = 0
-                    Instance.new("UICorner", R).CornerRadius = UDim.new(0, 6)
-
-                    local NameLbl = Instance.new("TextLabel", R)
-                    NameLbl.Size = UDim2.new(1, -170, 1, 0)
-                    NameLbl.Position = UDim2.new(0, 12, 0, 0)
-                    NameLbl.BackgroundTransparency = 1
-                    NameLbl.Text = cfgName .. " (" .. tostring(count) .. " flags)"
-                    NameLbl.Font = Enum.Font.GothamBold
-                    NameLbl.TextSize = 11
-                    NameLbl.TextColor3 = C.TxtDark
-                    NameLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-                    local LoadBtn = Instance.new("TextButton", R)
-                    LoadBtn.Size = UDim2.new(0, 50, 0, 22)
-                    LoadBtn.Position = UDim2.new(1, -112, 0.5, -11)
-                    LoadBtn.BackgroundColor3 = C.Blue
-                    LoadBtn.BorderSizePixel = 0
-                    LoadBtn.Text = "Load"
-                    LoadBtn.Font = Enum.Font.GothamBold
-                    LoadBtn.TextSize = 10
-                    LoadBtn.TextColor3 = C.TxtWhite
-                    Instance.new("UICorner", LoadBtn).CornerRadius = UDim.new(0, 4)
-
-                    local DelBtn = Instance.new("TextButton", R)
-                    DelBtn.Size = UDim2.new(0, 50, 0, 22)
-                    DelBtn.Position = UDim2.new(1, -56, 0.5, -11)
-                    DelBtn.BackgroundColor3 = C.BtnBg
-                    DelBtn.BorderSizePixel = 0
-                    DelBtn.Text = "Delete"
-                    DelBtn.Font = Enum.Font.GothamMedium
-                    DelBtn.TextSize = 10
-                    DelBtn.TextColor3 = C.Red
-                    Instance.new("UICorner", DelBtn).CornerRadius = UDim.new(0, 4)
-
-                    LoadBtn.MouseButton1Click:Connect(function()
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
-                        LoadBtn.Text = "Loaded"
-                        task.delay(1.5, function() LoadBtn.Text = "Load" end)
-                        RefreshLists()
-                    end)
-
-                    DelBtn.MouseButton1Click:Connect(function()
-                        dec[cfgName] = nil
-                        SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(dec))
-                        R:Destroy()
-                    end)
-                end
+    local dec = AutoRepairJSON(cnt)
+    if type(dec) == "table" then
+        for k, v in pairs(dec) do
+            if not k:lower():find("fluidforceenabled") then
+                local R = New("Frame", {Size = UDim2.new(1, -8, 0, 28), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0}, FlagScroll, 6)
+                New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.StatGreen or C.StatRed, BorderSizePixel = 0}, R, 3)
+                New("TextLabel", {Size = UDim2.new(1, -20, 1, 0), Position = UDim2.new(0, 26, 0, 0), BackgroundTransparency = 1, Text = k .. " = " .. tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left}, R)
             end
         end
     end
 
+    local cfgCnt = SafeReadFile(CONFIGS_PATH)
+    local ok, savedConfigs = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
+    if ok and type(savedConfigs) == "table" then
+        for cfgName, flagsObj in pairs(savedConfigs) do
+            if type(flagsObj) == "table" then
+                local count = 0
+                for _ in pairs(flagsObj) do count = count + 1 end
+                local R = New("Frame", {Size = UDim2.new(1, -8, 0, 32), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0}, ConfigScroll, 6)
+                New("TextLabel", {Size = UDim2.new(1, -170, 1, 0), Position = UDim2.new(0, 12, 0, 0), BackgroundTransparency = 1, Text = cfgName .. " (" .. tostring(count) .. " flags)", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left}, R)
+                local LoadBtn = New("TextButton", {Size = UDim2.new(0, 50, 0, 22), Position = UDim2.new(1, -112, 0.5, -11), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite}, R, 4)
+                local DelBtn = New("TextButton", {Size = UDim2.new(0, 50, 0, 22), Position = UDim2.new(1, -56, 0.5, -11), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Delete", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.Red}, R, 4)
+                LoadBtn.MouseButton1Click:Connect(function()
+                    SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
+                    LoadBtn.Text = "Loaded"
+                    task.delay(1.5, function() LoadBtn.Text = "Load" end)
+                    RefreshLists()
+                end)
+                DelBtn.MouseButton1Click:Connect(function()
+                    savedConfigs[cfgName] = nil
+                    SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
+                    R:Destroy()
+                end)
+            end
+        end
+    end
     FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 10)
     ConfigScroll.CanvasSize = UDim2.new(0, 0, 0, CLayout.AbsoluteContentSize.Y + 10)
 end
@@ -699,38 +523,22 @@ CLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() Confi
 TabActiveBtn.MouseButton1Click:Connect(function()
     Tween(TabActiveBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
     Tween(TabSavedBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
-    ActiveContainer.Visible = true
-    SavedContainer.Visible = false
+    ActiveContainer.Visible, SavedContainer.Visible = true, false
     RefreshLists()
 end)
 
 TabSavedBtn.MouseButton1Click:Connect(function()
     Tween(TabSavedBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
     Tween(TabActiveBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
-    ActiveContainer.Visible = false
-    SavedContainer.Visible = true
+    ActiveContainer.Visible, SavedContainer.Visible = false, true
     RefreshLists()
 end)
 
-local BotBar = Instance.new("Frame", Main)
-BotBar.Size = UDim2.new(1, -40, 0, 38)
-BotBar.Position = UDim2.new(0, 20, 1, -50)
-BotBar.BackgroundTransparency = 1
-
-local BL = Instance.new("UIListLayout", BotBar)
-BL.FillDirection = Enum.FillDirection.Horizontal
-BL.Padding = UDim.new(0, 5)
+local BotBar = New("Frame", {Size = UDim2.new(1, -40, 0, 38), Position = UDim2.new(0, 20, 1, -50), BackgroundTransparency = 1}, Main)
+local BL = New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5)}, BotBar)
 
 local function MakeActionBtn(txt, w, col)
-    local B = Instance.new("TextButton", BotBar)
-    B.Size = UDim2.new(0, w, 1, 0)
-    B.BackgroundColor3 = col or C.BtnBg
-    B.BorderSizePixel = 0
-    B.Text = txt
-    B.Font = Enum.Font.GothamBold
-    B.TextSize = 11
-    B.TextColor3 = col and C.TxtWhite or C.TxtDark
-    Instance.new("UICorner", B).CornerRadius = UDim.new(0, 6)
+    local B = New("TextButton", {Size = UDim2.new(0, w, 1, 0), BackgroundColor3 = col or C.BtnBg, BorderSizePixel = 0, Text = txt, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = col and C.TxtWhite or C.TxtDark}, BotBar, 6)
     B.MouseEnter:Connect(function() Tween(B, {BackgroundColor3 = col and C.DarkBlue or C.BtnHover}, 0.2) end)
     B.MouseLeave:Connect(function() Tween(B, {BackgroundColor3 = col or C.BtnBg}, 0.2) end)
     return B
@@ -744,96 +552,26 @@ local ClearBtn = MakeActionBtn("Clear", 50, nil)
 local WipeBtn = MakeActionBtn("Close UI", 65, Color3.fromRGB(159, 18, 57))
 
 local function MakePanel(w, h)
-    local P = Instance.new("Frame", Main)
-    P.Size = UDim2.new(0, w, 0, h)
-    P.Position = UDim2.new(0.5, 0, 0.5, 0)
-    P.AnchorPoint = Vector2.new(0.5, 0.5)
-    P.BackgroundColor3 = C.PanelBg
-    P.BorderSizePixel = 0
-    P.Visible = false
-    P.ZIndex = 10
-    Instance.new("UICorner", P).CornerRadius = UDim.new(0, 10)
-    return P
+    return New("Frame", {Size = UDim2.new(0, w, 0, h), Position = UDim2.new(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.PanelBg, BorderSizePixel = 0, Visible = false, ZIndex = 10}, Main, 10)
 end
 
--- FastFlag Live Editor Panel
 local EditPanel = MakePanel(480, 310)
-
-local EditTitle = Instance.new("TextLabel", EditPanel)
-EditTitle.Size = UDim2.new(1, -24, 0, 22)
-EditTitle.Position = UDim2.new(0, 16, 0, 10)
-EditTitle.BackgroundTransparency = 1
-EditTitle.Text = "FastFlag Live Editor"
-EditTitle.Font = Enum.Font.GothamBold
-EditTitle.TextSize = 13
-EditTitle.TextColor3 = C.TxtDark
-EditTitle.TextXAlignment = Enum.TextXAlignment.Left
-EditTitle.ZIndex = 10
-
-local SearchBox = Instance.new("TextBox", EditPanel)
-SearchBox.Size = UDim2.new(1, -32, 0, 28)
-SearchBox.Position = UDim2.new(0, 16, 0, 36)
-SearchBox.BackgroundColor3 = C.CBoxBg
-SearchBox.PlaceholderText = "Search flags to edit..."
-SearchBox.Text = ""
-SearchBox.Font = Enum.Font.GothamMedium
-SearchBox.TextSize = 11
-SearchBox.TextColor3 = C.TxtDark
-SearchBox.PlaceholderColor3 = C.TxtGray
-SearchBox.ZIndex = 10
-Instance.new("UICorner", SearchBox).CornerRadius = UDim.new(0, 6)
-
-local EditScroll = Instance.new("ScrollingFrame", EditPanel)
-EditScroll.Size = UDim2.new(1, -32, 1, -125)
-EditScroll.Position = UDim2.new(0, 16, 0, 70)
-EditScroll.BackgroundColor3 = C.EditorBg
-EditScroll.BorderSizePixel = 0
-EditScroll.ScrollBarThickness = 4
-EditScroll.ScrollBarImageColor3 = C.Border
-EditScroll.ZIndex = 10
-Instance.new("UICorner", EditScroll).CornerRadius = UDim.new(0, 6)
-
-local ELayout = Instance.new("UIListLayout", EditScroll)
-ELayout.Padding = UDim.new(0, 4)
+New("TextLabel", {Size = UDim2.new(1, -24, 0, 22), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "FastFlag Live Editor", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10}, EditPanel)
+local SearchBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 28), Position = UDim2.new(0, 16, 0, 36), BackgroundColor3 = C.CBoxBg, PlaceholderText = "Search flags to edit...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtGray, ZIndex = 10}, EditPanel, 6)
+local EditScroll = New("ScrollingFrame", {Size = UDim2.new(1, -32, 1, -125), Position = UDim2.new(0, 16, 0, 70), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.Border, ZIndex = 10}, EditPanel, 6)
+local ELayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, EditScroll)
 
 local function PopulateEditList(query)
     for _, x in ipairs(EditScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
     local cnt = SafeReadFile(F_PATH)
     local dec = AutoRepairJSON(cnt)
     local filter = (query or ""):lower():gsub(" ", "")
-
     if type(dec) == "table" then
         for k, v in pairs(dec) do
             if not k:lower():find("fluidforceenabled") and (filter == "" or k:lower():find(filter, 1, true)) then
-                local row = Instance.new("Frame", EditScroll)
-                row.Size = UDim2.new(1, -8, 0, 30)
-                row.BackgroundColor3 = C.CBoxBg
-                row.BorderSizePixel = 0
-                row.ZIndex = 11
-                Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-
-                local nameLbl = Instance.new("TextLabel", row)
-                nameLbl.Size = UDim2.new(1, -165, 1, 0)
-                nameLbl.Position = UDim2.new(0, 10, 0, 0)
-                nameLbl.BackgroundTransparency = 1
-                nameLbl.Text = k
-                nameLbl.Font = Enum.Font.Code
-                nameLbl.TextSize = 11
-                nameLbl.TextColor3 = C.TxtDark
-                nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-                nameLbl.ZIndex = 11
-
-                local valBox = Instance.new("TextBox", row)
-                valBox.Size = UDim2.new(0, 80, 0, 22)
-                valBox.Position = UDim2.new(1, -150, 0.5, -11)
-                valBox.BackgroundColor3 = C.EditorBg
-                valBox.Text = tostring(v)
-                valBox.Font = Enum.Font.Code
-                valBox.TextSize = 11
-                valBox.TextColor3 = C.Blue
-                valBox.ZIndex = 11
-                Instance.new("UICorner", valBox).CornerRadius = UDim.new(0, 4)
-
+                local row = New("Frame", {Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0, ZIndex = 11}, EditScroll, 6)
+                New("TextLabel", {Size = UDim2.new(1, -165, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = k, Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11}, row)
+                local valBox = New("TextBox", {Size = UDim2.new(0, 80, 0, 22), Position = UDim2.new(1, -150, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 11}, row, 4)
                 valBox.FocusLost:Connect(function()
                     local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
                     local num = tonumber(newText)
@@ -841,23 +579,10 @@ local function PopulateEditList(query)
                     elseif newText:lower() == "true" then dec[k] = true
                     elseif newText:lower() == "false" then dec[k] = false
                     else dec[k] = newText end
-
                     SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
                     RefreshLists()
                 end)
-
-                local del = Instance.new("TextButton", row)
-                del.Size = UDim2.new(0, 50, 0, 22)
-                del.Position = UDim2.new(1, -60, 0.5, -11)
-                del.BackgroundColor3 = C.BtnBg
-                del.BorderSizePixel = 0
-                del.Text = "Delete"
-                del.Font = Enum.Font.GothamMedium
-                del.TextSize = 10
-                del.TextColor3 = C.Red
-                del.ZIndex = 11
-                Instance.new("UICorner", del).CornerRadius = UDim.new(0, 4)
-
+                local del = New("TextButton", {Size = UDim2.new(0, 50, 0, 22), Position = UDim2.new(1, -60, 0.5, -11), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Delete", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.Red, ZIndex = 11}, row, 4)
                 del.MouseButton1Click:Connect(function()
                     dec[k] = nil
                     SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
@@ -870,202 +595,47 @@ local function PopulateEditList(query)
     EditScroll.CanvasSize = UDim2.new(0, 0, 0, ELayout.AbsoluteContentSize.Y + 10)
 end
 
-ELayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    EditScroll.CanvasSize = UDim2.new(0, 0, 0, ELayout.AbsoluteContentSize.Y + 10)
-end)
+ELayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() EditScroll.CanvasSize = UDim2.new(0, 0, 0, ELayout.AbsoluteContentSize.Y + 10) end)
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function() PopulateEditList(SearchBox.Text) end)
 
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-    PopulateEditList(SearchBox.Text)
-end)
-
-local EditCloseBtn = Instance.new("TextButton", EditPanel)
-EditCloseBtn.Size = UDim2.new(0, 85, 0, 28)
-EditCloseBtn.Position = UDim2.new(1, -95, 1, -38)
-EditCloseBtn.BackgroundColor3 = C.Blue
-EditCloseBtn.BorderSizePixel = 0
-EditCloseBtn.Text = "Done"
-EditCloseBtn.Font = Enum.Font.GothamBold
-EditCloseBtn.TextSize = 11
-EditCloseBtn.TextColor3 = C.TxtWhite
-EditCloseBtn.ZIndex = 10
-Instance.new("UICorner", EditCloseBtn).CornerRadius = UDim.new(0, 6)
-
-EditCloseBtn.MouseButton1Click:Connect(function()
-    EditPanel.Visible = false
-    RefreshLists()
-end)
-
-EditFlagsBtn.MouseButton1Click:Connect(function()
-    SearchBox.Text = ""
-    PopulateEditList("")
-    EditPanel.Visible = true
-end)
+local EditCloseBtn = New("TextButton", {Size = UDim2.new(0, 85, 0, 28), Position = UDim2.new(1, -95, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Done", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 10}, EditPanel, 6)
+EditCloseBtn.MouseButton1Click:Connect(function() EditPanel.Visible = false RefreshLists() end)
+EditFlagsBtn.MouseButton1Click:Connect(function() SearchBox.Text = "" PopulateEditList("") EditPanel.Visible = true end)
 
 local SaveConfigPanel = MakePanel(380, 140)
-local SaveCfgTitle = Instance.new("TextLabel", SaveConfigPanel)
-SaveCfgTitle.Size = UDim2.new(1, -24, 0, 24)
-SaveCfgTitle.Position = UDim2.new(0, 16, 0, 12)
-SaveCfgTitle.BackgroundTransparency = 1
-SaveCfgTitle.Text = "Save Active Flags as Named Config"
-SaveCfgTitle.Font = Enum.Font.GothamBold
-SaveCfgTitle.TextSize = 12
-SaveCfgTitle.TextColor3 = C.TxtDark
-SaveCfgTitle.TextXAlignment = Enum.TextXAlignment.Left
-SaveCfgTitle.ZIndex = 10
-
-local ConfigNameBox = Instance.new("TextBox", SaveConfigPanel)
-ConfigNameBox.Size = UDim2.new(1, -32, 0, 32)
-ConfigNameBox.Position = UDim2.new(0, 16, 0, 42)
-ConfigNameBox.BackgroundColor3 = C.CBoxBg
-ConfigNameBox.PlaceholderText = "Enter Config Name..."
-ConfigNameBox.Text = ""
-ConfigNameBox.Font = Enum.Font.GothamMedium
-ConfigNameBox.TextSize = 11
-ConfigNameBox.TextColor3 = C.TxtDark
-ConfigNameBox.PlaceholderColor3 = C.TxtGray
-ConfigNameBox.ZIndex = 10
-Instance.new("UICorner", ConfigNameBox).CornerRadius = UDim.new(0, 6)
-
-local CfgCancelBtn = Instance.new("TextButton", SaveConfigPanel)
-CfgCancelBtn.Size = UDim2.new(0, 75, 0, 28)
-CfgCancelBtn.Position = UDim2.new(1, -170, 1, -38)
-CfgCancelBtn.BackgroundColor3 = C.BtnBg
-CfgCancelBtn.BorderSizePixel = 0
-CfgCancelBtn.Text = "Cancel"
-CfgCancelBtn.Font = Enum.Font.GothamMedium
-CfgCancelBtn.TextSize = 11
-CfgCancelBtn.TextColor3 = C.TxtDark
-CfgCancelBtn.ZIndex = 10
-Instance.new("UICorner", CfgCancelBtn).CornerRadius = UDim.new(0, 6)
-
-local CfgSaveBtn = Instance.new("TextButton", SaveConfigPanel)
-CfgSaveBtn.Size = UDim2.new(0, 85, 0, 28)
-CfgSaveBtn.Position = UDim2.new(1, -90, 1, -38)
-CfgSaveBtn.BackgroundColor3 = C.Blue
-CfgSaveBtn.BorderSizePixel = 0
-CfgSaveBtn.Text = "Save Config"
-CfgSaveBtn.Font = Enum.Font.GothamBold
-CfgSaveBtn.TextSize = 11
-CfgSaveBtn.TextColor3 = C.TxtWhite
-CfgSaveBtn.ZIndex = 10
-Instance.new("UICorner", CfgSaveBtn).CornerRadius = UDim.new(0, 6)
-
-local ImportPanel = MakePanel(440, 245)
-local ImpTitle = Instance.new("TextLabel", ImportPanel)
-ImpTitle.Size = UDim2.new(1, -24, 0, 24)
-ImpTitle.Position = UDim2.new(0, 16, 0, 10)
-ImpTitle.BackgroundTransparency = 1
-ImpTitle.Text = "Import / Add FastFlags"
-ImpTitle.Font = Enum.Font.GothamBold
-ImpTitle.TextSize = 13
-ImpTitle.TextColor3 = C.TxtDark
-ImpTitle.TextXAlignment = Enum.TextXAlignment.Left
-ImpTitle.ZIndex = 10
-
-local ImpBox = Instance.new("TextBox", ImportPanel)
-ImpBox.Size = UDim2.new(1, -32, 1, -100)
-ImpBox.Position = UDim2.new(0, 16, 0, 38)
-ImpBox.BackgroundColor3 = C.CBoxBg
-ImpBox.BorderSizePixel = 0
-ImpBox.MultiLine = true
-ImpBox.PlaceholderText = 'Paste JSON flags here...'
-ImpBox.Text = ""
-ImpBox.Font = Enum.Font.Code
-ImpBox.TextSize = 11
-ImpBox.TextColor3 = C.TxtDark
-ImpBox.PlaceholderColor3 = C.TxtGray
-ImpBox.TextXAlignment = Enum.TextXAlignment.Left
-ImpBox.TextYAlignment = Enum.TextYAlignment.Top
-ImpBox.ClearTextOnFocus = false
-ImpBox.ZIndex = 10
-Instance.new("UICorner", ImpBox).CornerRadius = UDim.new(0, 6)
-
-local ImpCancel = Instance.new("TextButton", ImportPanel)
-ImpCancel.Size = UDim2.new(0, 80, 0, 28)
-ImpCancel.Position = UDim2.new(1, -280, 1, -38)
-ImpCancel.BackgroundColor3 = C.BtnBg
-ImpCancel.BorderSizePixel = 0
-ImpCancel.Text = "Cancel"
-ImpCancel.Font = Enum.Font.GothamMedium
-ImpCancel.TextSize = 11
-ImpCancel.TextColor3 = C.TxtDark
-ImpCancel.ZIndex = 10
-Instance.new("UICorner", ImpCancel).CornerRadius = UDim.new(0, 6)
-
-local ImpAppend = Instance.new("TextButton", ImportPanel)
-ImpAppend.Size = UDim2.new(0, 95, 0, 28)
-ImpAppend.Position = UDim2.new(1, -192, 1, -38)
-ImpAppend.BackgroundColor3 = C.Blue
-ImpAppend.BorderSizePixel = 0
-ImpAppend.Text = "Add to Existing"
-ImpAppend.Font = Enum.Font.GothamBold
-ImpAppend.TextSize = 11
-ImpAppend.TextColor3 = C.TxtWhite
-ImpAppend.ZIndex = 10
-Instance.new("UICorner", ImpAppend).CornerRadius = UDim.new(0, 6)
-
-local ImpReplace = Instance.new("TextButton", ImportPanel)
-ImpReplace.Size = UDim2.new(0, 85, 0, 28)
-ImpReplace.Position = UDim2.new(1, -90, 1, -38)
-ImpReplace.BackgroundColor3 = C.Red
-ImpReplace.BorderSizePixel = 0
-ImpReplace.Text = "Replace All"
-ImpReplace.Font = Enum.Font.GothamBold
-ImpReplace.TextSize = 11
-ImpReplace.TextColor3 = C.TxtWhite
-ImpReplace.ZIndex = 10
-Instance.new("UICorner", ImpReplace).CornerRadius = UDim.new(0, 4)
-
-ClearBtn.MouseButton1Click:Connect(function()
-    _G.ShystxEngineActive = false
-    _G.ShystxBoostEnabled = false
-    _G.ShystxActiveFlagsCache = {}
-    SafeWriteFile(F_PATH, HttpService:JSONEncode({["FIntSimDefaultFluidForceEnabled"] = 1}))
-    RefreshLists()
-end)
-
-SaveConfigBtn.MouseButton1Click:Connect(function()
-    ImportPanel.Visible = false
-    EditPanel.Visible = false
-    ConfigNameBox.Text = ""
-    SaveConfigPanel.Visible = true
-end)
-
+New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 12), BackgroundTransparency = 1, Text = "Save Active Flags as Named Config", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10}, SaveConfigPanel)
+local ConfigNameBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 32), Position = UDim2.new(0, 16, 0, 42), BackgroundColor3 = C.CBoxBg, PlaceholderText = "Enter Config Name...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtGray, ZIndex = 10}, SaveConfigPanel, 6)
+local CfgCancelBtn = New("TextButton", {Size = UDim2.new(0, 75, 0, 28), Position = UDim2.new(1, -170, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 10}, SaveConfigPanel, 6)
+local CfgSaveBtn = New("TextButton", {Size = UDim2.new(0, 85, 0, 28), Position = UDim2.new(1, -90, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Save Config", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 10}, SaveConfigPanel, 6)
+SaveConfigBtn.MouseButton1Click:Connect(function() ImportPanel.Visible, EditPanel.Visible, SaveConfigPanel.Visible = false, false, true ConfigNameBox.Text = "" end)
 CfgCancelBtn.MouseButton1Click:Connect(function() SaveConfigPanel.Visible = false end)
-
 CfgSaveBtn.MouseButton1Click:Connect(function()
     local name = ConfigNameBox.Text:gsub('^%s*(.-)%s*$', '%1')
     if name ~= "" then
-        local cnt = SafeReadFile(F_PATH)
-        local activeDec = AutoRepairJSON(cnt)
-        local cfgCnt = SafeReadFile(CONFIGS_PATH)
-        local ok, savedConfigs = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
+        local activeDec = AutoRepairJSON(SafeReadFile(F_PATH))
+        local ok, savedConfigs = pcall(function() return HttpService:JSONDecode(SafeReadFile(CONFIGS_PATH)) end)
         if not ok or type(savedConfigs) ~= "table" then savedConfigs = {} end
         savedConfigs[name] = activeDec
         SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
         CfgSaveBtn.Text = "Saved!"
         RefreshLists()
-        task.delay(1.2, function()
-            CfgSaveBtn.Text = "Save Config"
-            SaveConfigPanel.Visible = false
-        end)
+        task.delay(1.2, function() CfgSaveBtn.Text = "Save Config" SaveConfigPanel.Visible = false end)
     end
 end)
 
-ImportBtn.MouseButton1Click:Connect(function()
-    SaveConfigPanel.Visible = false
-    EditPanel.Visible = false
-    ImportPanel.Visible = true
-    ImpBox.Text = ""
-end)
+local ImportPanel = MakePanel(440, 245)
+New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "Import / Add FastFlags", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10}, ImportPanel)
+local ImpBox = New("TextBox", {Size = UDim2.new(1, -32, 1, -100), Position = UDim2.new(0, 16, 0, 38), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0, MultiLine = true, PlaceholderText = "Paste JSON flags here...", Text = "", Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtGray, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ClearTextOnFocus = false, ZIndex = 10}, ImportPanel, 6)
+local ImpCancel = New("TextButton", {Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -280, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 10}, ImportPanel, 6)
+local ImpAppend = New("TextButton", {Size = UDim2.new(0, 95, 0, 28), Position = UDim2.new(1, -192, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Add to Existing", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 10}, ImportPanel, 6)
+local ImpReplace = New("TextButton", {Size = UDim2.new(0, 85, 0, 28), Position = UDim2.new(1, -90, 1, -38), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "Replace All", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 10}, ImportPanel, 4)
 
+ImportBtn.MouseButton1Click:Connect(function() SaveConfigPanel.Visible, EditPanel.Visible, ImportPanel.Visible = false, false, true ImpBox.Text = "" end)
 ImpCancel.MouseButton1Click:Connect(function() ImportPanel.Visible = false end)
-
 ImpAppend.MouseButton1Click:Connect(function()
     if ImpBox.Text ~= "" then
         local newFlags = AutoRepairJSON(ImpBox.Text)
-        local curCnt = SafeReadFile(F_PATH)
-        local currentFlags = AutoRepairJSON(curCnt)
+        local currentFlags = AutoRepairJSON(SafeReadFile(F_PATH))
         if type(newFlags) == "table" and type(currentFlags) == "table" then
             for k, v in pairs(newFlags) do currentFlags[k] = v end
             currentFlags["FIntSimDefaultFluidForceEnabled"] = 1
@@ -1074,15 +644,11 @@ ImpAppend.MouseButton1Click:Connect(function()
         end
     end
     ImpAppend.Text = "Added!"
-    task.delay(1, function()
-        ImpAppend.Text = "Add to Existing"
-        ImportPanel.Visible = false
-    end)
+    task.delay(1, function() ImpAppend.Text = "Add to Existing" ImportPanel.Visible = false end)
 end)
-
 ImpReplace.MouseButton1Click:Connect(function()
     if ImpBox.Text ~= "" then
-        local newFlags, _ = AutoRepairJSON(ImpBox.Text)
+        local newFlags = AutoRepairJSON(ImpBox.Text)
         if type(newFlags) == "table" then
             newFlags["FIntSimDefaultFluidForceEnabled"] = 1
             SafeWriteFile(F_PATH, HttpService:JSONEncode(newFlags))
@@ -1090,51 +656,36 @@ ImpReplace.MouseButton1Click:Connect(function()
         end
     end
     ImpReplace.Text = "Replaced!"
-    task.delay(1, function()
-        ImpReplace.Text = "Replace All"
-        ImportPanel.Visible = false
-    end)
+    task.delay(1, function() ImpReplace.Text = "Replace All" ImportPanel.Visible = false end)
+end)
+
+ClearBtn.MouseButton1Click:Connect(function()
+    _G.ShystxEngineActive, _G.ShystxBoostEnabled, _G.ShystxActiveFlagsCache = false, false, {}
+    SafeWriteFile(F_PATH, HttpService:JSONEncode({["FIntSimDefaultFluidForceEnabled"] = 1}))
+    RefreshLists()
 end)
 
 InjectBtn.MouseButton1Click:Connect(function()
-    local cnt = SafeReadFile(F_PATH)
-    local decoded, validJson = AutoRepairJSON(cnt)
-    local displayFlagsCount = 0
+    local decoded = AutoRepairJSON(SafeReadFile(F_PATH))
+    local count = 0
     if type(decoded) == "table" then
         decoded["FIntSimDefaultFluidForceEnabled"] = 1
-        for k in pairs(decoded) do
-            if not k:lower():find("fluidforceenabled") then
-                displayFlagsCount = displayFlagsCount + 1
-            end
-        end
+        for k in pairs(decoded) do if not k:lower():find("fluidforceenabled") then count = count + 1 end end
     end
-
     SafeWriteFile(F_PATH, HttpService:JSONEncode(decoded))
-    _G.ShystxActiveFlagsCache = decoded
-    _G.ShystxEngineActive = true
-
-    -- UNLOCK BOOST
-    _G.ShystxBoostEnabled = true
+    _G.ShystxActiveFlagsCache, _G.ShystxEngineActive, _G.ShystxBoostEnabled = decoded, true, true
 
     local function QueueScript(code)
         local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
         if type(q) == "function" then pcall(function() q(code) end) end
     end
-
     QueueScript(fullSource)
-    pcall(function()
-        LocalPlayer.OnTeleport:Connect(function()
-            QueueScript(fullSource)
-        end)
-    end)
+    pcall(function() LocalPlayer.OnTeleport:Connect(function() QueueScript(fullSource) end) end)
 
     if type(decoded) == "table" then
-        for flagName, val in pairs(decoded) do
-            TrySetFlag(flagName, val)
-        end
+        for flagName, val in pairs(decoded) do TrySetFlag(flagName, val) end
     end
-
-    InjectBtn.Text = "Applied (" .. tostring(displayFlagsCount) .. ")"
+    InjectBtn.Text = "Applied (" .. tostring(count) .. ")"
     RefreshLists()
     task.delay(2, function() InjectBtn.Text = "Apply Flags" end)
 end)
@@ -1143,40 +694,23 @@ local function ExitUI()
     local tw = Tween(UiScale, {Scale = 0.01}, 0.25)
     tw.Completed:Connect(function() pcall(function() ScreenGui:Destroy() end) end)
 end
-
 WipeBtn.MouseButton1Click:Connect(ExitUI)
 ClsBtn.MouseButton1Click:Connect(ExitUI)
-
-local function Toggle()
+MinBtn.MouseButton1Click:Connect(function()
     Main.Visible = not Main.Visible
-    if not Main.Visible then
-        ImportPanel.Visible = false
-        SaveConfigPanel.Visible = false
-        EditPanel.Visible = false
-    end
-end
-
-MinBtn.MouseButton1Click:Connect(Toggle)
+    if not Main.Visible then ImportPanel.Visible, SaveConfigPanel.Visible, EditPanel.Visible = false, false, false end
+end)
 
 local drag, dInput, dStart, sPos = false, nil, nil, nil
-
 TopBar.InputBegan:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
-        drag = true
-        dStart = inp.Position
-        sPos = Main.Position
-        inp.Changed:Connect(function()
-            if inp.UserInputState == Enum.UserInputState.End then drag = false end
-        end)
+        drag, dStart, sPos = true, inp.Position, Main.Position
+        inp.Changed:Connect(function() if inp.UserInputState == Enum.UserInputState.End then drag = false end end)
     end
 end)
-
 TopBar.InputChanged:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then
-        dInput = inp
-    end
+    if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then dInput = inp end
 end)
-
 UserInputService.InputChanged:Connect(function(inp)
     if inp == dInput and drag then
         local delta = inp.Position - dStart
