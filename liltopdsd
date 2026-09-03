@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - FINE-TUNED BOOST SUITE (COMPLETE & UNCUT)
+-- YB STRAP - EQUALIZED CROSS-PLATFORM BOOST SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 local template = [==[
@@ -188,7 +188,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(input, _)
 end))
 
 -- =========================================================================
--- SMOOTH CONTROLLED BOOST ENGINE (7-FRAME TAPERING)
+-- EQUALIZED CROSS-PLATFORM BOOST ENGINE (KEYBOARD & CONTROLLER PARITY)
 -- =========================================================================
 local currentHumanoid = nil
 local currentRootPart = nil
@@ -213,8 +213,8 @@ local function RecordTap(tapArray)
     end
 end
 
--- Tuned down a tad: perfectly balanced parabolic arc
-local FIXED_UPWARD_CURVE = {5.2, 4.4, 3.6, 2.8, 2.0, 1.2, 0.6}
+-- Absolute vertical velocity governors (Equalizes sustained Gamepad Jump with Keyboard Jump)
+local TARGET_ASCENT_CURVE = {58, 52, 45, 37, 28, 18, 8}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
@@ -258,10 +258,11 @@ local function ExecuteBoost()
 
     task.spawn(function()
         task.wait(0.01)
-        for i = 1, #FIXED_UPWARD_CURVE do
+        for i = 1, #TARGET_ASCENT_CURVE do
             if not currentRootPart or not currentRootPart.Parent or _G.ShystxBoostEnabled ~= true then break end
             local curVel = GetLinearVel(currentRootPart)
-            SetLinearVel(currentRootPart, curVel.X, curVel.Y + FIXED_UPWARD_CURVE[i], curVel.Z)
+            -- Directly set target ascent so controller and keyboard match 100%
+            SetLinearVel(currentRootPart, curVel.X, TARGET_ASCENT_CURVE[i], curVel.Z)
             RunService.Heartbeat:Wait()
         end
     end)
