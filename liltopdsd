@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - EQUALIZED CROSS-PLATFORM BOOST SUITE (COMPLETE & UNCUT)
+-- YB STRAP - LOWERED PARITY BOOST SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 local template = [==[
@@ -188,7 +188,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(input, _)
 end))
 
 -- =========================================================================
--- EQUALIZED CROSS-PLATFORM BOOST ENGINE (KEYBOARD & CONTROLLER PARITY)
+-- LOWERED CROSS-PLATFORM BOOST ENGINE (CONTROLLER & KEYBOARD EQUALIZED)
 -- =========================================================================
 local currentHumanoid = nil
 local currentRootPart = nil
@@ -213,8 +213,8 @@ local function RecordTap(tapArray)
     end
 end
 
--- Absolute vertical velocity governors (Equalizes sustained Gamepad Jump with Keyboard Jump)
-local TARGET_ASCENT_CURVE = {58, 52, 45, 37, 28, 18, 8}
+-- Lowered, controlled vertical ascent curve (100% equal on all devices)
+local TARGET_ASCENT_CURVE = {46, 40, 34, 27, 20, 13, 6}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
@@ -261,7 +261,6 @@ local function ExecuteBoost()
         for i = 1, #TARGET_ASCENT_CURVE do
             if not currentRootPart or not currentRootPart.Parent or _G.ShystxBoostEnabled ~= true then break end
             local curVel = GetLinearVel(currentRootPart)
-            -- Directly set target ascent so controller and keyboard match 100%
             SetLinearVel(currentRootPart, curVel.X, TARGET_ASCENT_CURVE[i], curVel.Z)
             RunService.Heartbeat:Wait()
         end
