@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - CLEAN PARITY & TUNED BOOST SUITE (COMPLETE & UNCUT)
+-- YB STRAP - RESTORED EQUALIZED UPWARD BOOST SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 local template = [==[
@@ -82,7 +82,6 @@ local function HasTargetOnly(str)
 end
 
 local function StripTargetLines(str)
-    if type(str) ~= "string" then return str end
     local lines = {}
     for line in str:gmatch("[^\r\n]+") do
         if not HasTargetOnly(line) and not (line:gsub(" ", ""):gsub("\t", "") == "") then
@@ -188,7 +187,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(input, _)
 end))
 
 -- =========================================================================
--- LOWERED CROSS-PLATFORM BOOST ENGINE (CONTROLLER AND KEYBOARD PARITY)
+-- SMOOTH UPWARD BOOST ENGINE (EQUALIZED CROSS-PLATFORM)
 -- =========================================================================
 local currentHumanoid = nil
 local currentRootPart = nil
@@ -213,8 +212,8 @@ local function RecordTap(tapArray)
     end
 end
 
--- Lowered controlled vertical ascent curve
-local TARGET_ASCENT_CURVE = {38, 32, 26, 20, 14, 8, 3}
+-- Tuned downward parabolic curve (buttery smooth upward glide)
+local FIXED_UPWARD_CURVE = {4.6, 3.9, 3.2, 2.5, 1.8, 1.2, 0.6}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
@@ -256,12 +255,22 @@ local function ExecuteBoost()
     isArmed = false
     lastBoostTime = now
 
+    -- Transition to Freefall so Roblox gamepad engine stops injecting sustained ButtonA jump thrust
+    pcall(function()
+        currentHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+    end)
+
     task.spawn(function()
         task.wait(0.01)
-        for i = 1, #TARGET_ASCENT_CURVE do
+        for i = 1, #FIXED_UPWARD_CURVE do
             if not currentRootPart or not currentRootPart.Parent or _G.ShystxBoostEnabled ~= true then break end
             local curVel = GetLinearVel(currentRootPart)
-            SetLinearVel(currentRootPart, curVel.X, TARGET_ASCENT_CURVE[i], curVel.Z)
+            local currentY = curVel.Y
+            if i == 1 then
+                -- Clamp initial frame so controller and keyboard start from the exact same baseline
+                currentY = math.clamp(currentY, 25, 52)
+            end
+            SetLinearVel(currentRootPart, curVel.X, currentY + FIXED_UPWARD_CURVE[i], curVel.Z)
             RunService.Heartbeat:Wait()
         end
     end)
