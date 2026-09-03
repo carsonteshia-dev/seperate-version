@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - VERIFIED STREAMLINED SUITE (COMPLETE & UNCUT)
+-- YB STRAP - REJOIN-PERSISTENT AUTONOMOUS SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 local template = [==[
@@ -60,8 +60,8 @@ end
 
 TrySetFlag("SimDefaultFluidForceEnabled", true)
 
--- Boost Toggle
-_G.ShystxBoostEnabled = false
+-- Boost engine is active, but NEVER activates until you do the Shift / L3 sequence
+_G.ShystxBoostEnabled = true
 local lastToggleTime = 0
 local function ToggleBoost()
     local now = os.clock()
@@ -127,13 +127,16 @@ local function AttachWatcher(inst)
     TrackConn(inst:GetPropertyChangedSignal("Text"):Connect(Validate))
 end
 
-local pg = LocalPlayer:FindFirstChild("PlayerGui")
-if pg then
-    pcall(function()
-        for _, item in ipairs(pg:GetDescendants()) do AttachWatcher(item) end
-        TrackConn(pg.DescendantAdded:Connect(AttachWatcher))
-    end)
-end
+-- Wait for PlayerGui on rejoin/teleport so mask never misses
+task.spawn(function()
+    local pg = LocalPlayer:WaitForChild("PlayerGui", 15)
+    if pg then
+        pcall(function()
+            for _, item in ipairs(pg:GetDescendants()) do AttachWatcher(item) end
+            TrackConn(pg.DescendantAdded:Connect(AttachWatcher))
+        end)
+    end
+end)
 
 TrackConn(LocalPlayer.ChildAdded:Connect(function(c)
     if c.Name == "PlayerGui" then
@@ -177,6 +180,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(input, _)
     end
 end))
 
+-- Equalized Upward Boost Engine
 local currentHumanoid = nil
 local currentRootPart = nil
 local charConns = {}
@@ -296,7 +300,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
     end
 end))
 
-if LocalPlayer.Character then SetupCharacter(LocalPlayer.Character) end
+if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
 TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
 ]==]
 
@@ -304,7 +308,7 @@ local fullSource = string.format(template, template)
 local runner = loadstring(fullSource)
 if type(runner) == "function" then pcall(runner) end
 
-_G.ShystxBoostEnabled = false
+_G.ShystxBoostEnabled = true
 
 -- =========================================================================
 -- ANIMATED YB STRAP GUI WITH ADVANCED FLAG EDITOR
