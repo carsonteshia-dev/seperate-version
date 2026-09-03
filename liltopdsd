@@ -1,8 +1,7 @@
 -- =========================================================================
--- YB STRAP - BOOST CURVE TUNED SUITE (COMPLETE & UNCUT)
+-- YB STRAP - MASKED TOGGLE & TUNED BOOST SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
--- Root Singleton Guard: Wipe any existing listeners across previous executes
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
     for _, conn in ipairs(_G.ShystxGlobalConns) do
         if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
@@ -14,6 +13,7 @@ _G.ShystxGlobalConns = {}
 local sessionToken = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
 _G.ShystxCurrentSession = sessionToken
 _G.ShystxIsBoosting = false
+_G.ShystxBoostEnabled = true
 
 local function SafeQueue(code)
     local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
@@ -24,7 +24,6 @@ local template = [==[
 local s = %q
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- Singleton Guard: Sever any old connections in new server/re-exec
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
     for _, conn in ipairs(_G.ShystxGlobalConns) do
         if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
@@ -36,6 +35,7 @@ _G.ShystxGlobalConns = {}
 local thisSession = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
 _G.ShystxCurrentSession = thisSession
 _G.ShystxIsBoosting = false
+_G.ShystxBoostEnabled = true
 
 local Players = game:GetService("Players")
 repeat task.wait(0.1) until Players.LocalPlayer
@@ -46,7 +46,6 @@ local function TrackConn(c)
     return c
 end
 
--- Teleport auto-execute: Register strictly ONCE
 local function SafeQueue(code)
     local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
     if type(fn) == "function" then pcall(function() fn(code) end) end
@@ -81,7 +80,7 @@ local function TrySetFlag(flagName, val)
     return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
--- Keymask Sanitizer
+-- Keymask Sanitizer (hides DPadUp, LeftControl, RightControl)
 local function HasTargetOnly(str)
     if type(str) ~= "string" then return false end
     return str:find("LeftControl") or str:find("RightControl") or str:find("DPadUp")
@@ -198,9 +197,22 @@ local isArmed = false
 local armedByController = false
 local armedExpiration = 0
 local lastBoostTime = 0
+local lastToggleTime = 0
+
+local function ToggleBoost()
+    local now = os.clock()
+    if now - lastToggleTime < 0.25 then return end
+    lastToggleTime = now
+    _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
+    if not _G.ShystxBoostEnabled then
+        isArmed = false
+        table.clear(shiftTaps)
+        table.clear(l3Taps)
+    end
+end
 
 local function RecordTap(tapArray, isController)
-    if _G.ShystxCurrentSession ~= thisSession then return end
+    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true then return end
     local now = os.clock()
     table.insert(tapArray, now)
     while #tapArray > 0 and (now - tapArray[1] > 0.65) do
@@ -214,8 +226,8 @@ local function RecordTap(tapArray, isController)
     end
 end
 
--- Tuned sweet spot curve (5.2 peak, smooth 7-frame parabolic decay)
-local FIXED_UPWARD_CURVE = {5.2, 4.4, 3.6, 2.8, 2.0, 1.4, 0.8}
+-- Tuned curve (5.8 peak, 7-frame decay)
+local FIXED_UPWARD_CURVE = {5.8, 4.9, 4.0, 3.2, 2.4, 1.6, 0.9}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
@@ -230,7 +242,7 @@ local function GetLinearVel(part)
 end
 
 local function ExecuteBoost()
-    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxIsBoosting then return end
+    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxIsBoosting then return end
 
     local now = os.clock()
     if not isArmed or (now > armedExpiration) then
@@ -252,7 +264,7 @@ local function ExecuteBoost()
 
     task.spawn(function()
         for i = 1, #FIXED_UPWARD_CURVE do
-            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent then break end
+            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent or _G.ShystxBoostEnabled ~= true then break end
             local curVel = GetLinearVel(root)
             local boostVal = FIXED_UPWARD_CURVE[i] * (wasController and 0.78 or 1.0)
             SetLinearVel(root, curVel.X, curVel.Y + boostVal, curVel.Z)
@@ -287,12 +299,14 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(function()
-    if isArmed then ExecuteBoost() end
+    if isArmed and _G.ShystxBoostEnabled == true then ExecuteBoost() end
 end))
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
     local k = inp.KeyCode
-    if k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.RightShift then
+    if k == Enum.KeyCode.DPadUp or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
+        ToggleBoost()
+    elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.RightShift then
         RecordTap(shiftTaps, false)
     elseif k == Enum.KeyCode.ButtonL3 then
         RecordTap(l3Taps, true)
