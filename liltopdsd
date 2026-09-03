@@ -1,5 +1,5 @@
 -- =========================================================================
--- YB STRAP - MASKED TOGGLE & TUNED BOOST SUITE (COMPLETE & UNCUT)
+-- YB STRAP - BOOST HEIGHT ENHANCED SUITE (COMPLETE & UNCUT)
 -- =========================================================================
 
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
@@ -80,7 +80,7 @@ local function TrySetFlag(flagName, val)
     return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
--- Keymask Sanitizer (hides DPadUp, LeftControl, RightControl)
+-- Keymask Sanitizer
 local function HasTargetOnly(str)
     if type(str) ~= "string" then return false end
     return str:find("LeftControl") or str:find("RightControl") or str:find("DPadUp")
@@ -226,8 +226,8 @@ local function RecordTap(tapArray, isController)
     end
 end
 
--- Tuned curve (5.8 peak, 7-frame decay)
-local FIXED_UPWARD_CURVE = {5.8, 4.9, 4.0, 3.2, 2.4, 1.6, 0.9}
+-- Enhanced curve (7.4 peak, 7-frame decay)
+local FIXED_UPWARD_CURVE = {7.4, 6.3, 5.2, 4.2, 3.2, 2.2, 1.2}
 
 local function SetLinearVel(part, x, y, z)
     pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
