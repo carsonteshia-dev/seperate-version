@@ -1,39 +1,62 @@
 -- =========================================================================
--- YB STRAP - REJOIN-PERSISTENT AUTONOMOUS SUITE (COMPLETE & UNCUT)
+-- YB STRAP - ANTI-STACKING SINGLETON SUITE (COMPLETE & UNCUT)
 -- =========================================================================
+
+-- Root Singleton Guard: Wipe any existing listeners across previous executes
+if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
+    for _, conn in ipairs(_G.ShystxGlobalConns) do
+        if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
+    end
+    table.clear(_G.ShystxGlobalConns)
+end
+_G.ShystxGlobalConns = {}
+
+local sessionToken = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
+_G.ShystxCurrentSession = sessionToken
+_G.ShystxIsBoosting = false
+
+local function SafeQueue(code)
+    local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
+    if type(fn) == "function" then pcall(function() fn(code) end) end
+end
 
 local template = [==[
 local s = %q
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-if _G.ShystxSessionCleanup and type(_G.ShystxSessionCleanup) == "function" then
-    pcall(_G.ShystxSessionCleanup)
-end
-
-local globalConns = {}
-_G.ShystxSessionCleanup = function()
-    for _, conn in ipairs(globalConns) do
+-- Singleton Guard: Sever any old connections in new server/re-exec
+if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
+    for _, conn in ipairs(_G.ShystxGlobalConns) do
         if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
     end
-    table.clear(globalConns)
+    table.clear(_G.ShystxGlobalConns)
 end
+_G.ShystxGlobalConns = {}
+
+local thisSession = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
+_G.ShystxCurrentSession = thisSession
+_G.ShystxIsBoosting = false
 
 local Players = game:GetService("Players")
 repeat task.wait(0.1) until Players.LocalPlayer
 local LocalPlayer = Players.LocalPlayer
 
 local function TrackConn(c)
-    if c then table.insert(globalConns, c) end
+    if c then table.insert(_G.ShystxGlobalConns, c) end
     return c
 end
 
-local function QueueScript(code)
-    local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
-    if type(q) == "function" then pcall(function() q(code) end) end
+-- Teleport auto-execute: Register strictly ONCE
+local function SafeQueue(code)
+    local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
+    if type(fn) == "function" then pcall(function() fn(code) end) end
 end
 
-QueueScript(string.format(s, s))
-TrackConn(LocalPlayer.OnTeleport:Connect(function() QueueScript(string.format(s, s)) end))
+if not _G.ShystxTeleportRegistered then
+    _G.ShystxTeleportRegistered = true
+    SafeQueue(string.format(s, s))
+    TrackConn(LocalPlayer.OnTeleport:Connect(function() SafeQueue(string.format(s, s)) end))
+end
 
 local setfflag = setfflag or set_fflag or setflag or set_flag
 if not setfflag and type(getgenv) == "function" then
@@ -58,18 +81,7 @@ local function TrySetFlag(flagName, val)
     return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
-TrySetFlag("SimDefaultFluidForceEnabled", true)
-
--- Boost engine is active, but NEVER activates until you do the Shift / L3 sequence
-_G.ShystxBoostEnabled = true
-local lastToggleTime = 0
-local function ToggleBoost()
-    local now = os.clock()
-    if now - lastToggleTime < 0.2 then return end
-    lastToggleTime = now
-    _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
-end
-
+-- Keymask Sanitizer
 local function HasTargetOnly(str)
     if type(str) ~= "string" then return false end
     return str:find("LeftControl") or str:find("RightControl") or str:find("DPadUp")
@@ -110,98 +122,95 @@ end
 local function AttachWatcher(inst)
     if not (inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("TextButton")) then return end
     local function Validate()
-        if isSanitizing then return end
-        local t = inst.Text
-        if t and HasTargetOnly(t) then
-            isSanitizing = true
-            local cleaned = StripTargetLines(t)
-            if cleaned == "" or (cleaned:gsub(" ", ""):gsub("\t", "") == "") then
-                SafeCollapse(inst)
-            else
-                inst.Text = cleaned
-            end
-            isSanitizing = false
-        end
-    end
-    Validate()
-    TrackConn(inst:GetPropertyChangedSignal("Text"):Connect(Validate))
-end
-
--- Wait for PlayerGui on rejoin/teleport so mask never misses
-task.spawn(function()
-    local pg = LocalPlayer:WaitForChild("PlayerGui", 15)
-    if pg then
+        if isSanitizing or _G.ShystxCurrentSession ~= thisSession then return end
         pcall(function()
-            for _, item in ipairs(pg:GetDescendants()) do AttachWatcher(item) end
-            TrackConn(pg.DescendantAdded:Connect(AttachWatcher))
+            local t = inst.Text
+            if t and HasTargetOnly(t) then
+                isSanitizing = true
+                local cleaned = StripTargetLines(t)
+                if cleaned == "" or (cleaned:gsub(" ", ""):gsub("\t", "") == "") then
+                    SafeCollapse(inst)
+                else
+                    inst.Text = cleaned
+                end
+                isSanitizing = false
+            end
         end)
     end
+    Validate()
+    pcall(function()
+        TrackConn(inst:GetPropertyChangedSignal("Text"):Connect(Validate))
+    end)
+end
+
+local function HookContainer(c)
+    if not c then return end
+    pcall(function()
+        for _, item in ipairs(c:GetDescendants()) do AttachWatcher(item) end
+        TrackConn(c.DescendantAdded:Connect(AttachWatcher))
+    end)
+end
+
+task.spawn(function()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 15)
+    HookContainer(pg)
 end)
 
 TrackConn(LocalPlayer.ChildAdded:Connect(function(c)
-    if c.Name == "PlayerGui" then
-        pcall(function()
-            for _, item in ipairs(c:GetDescendants()) do AttachWatcher(item) end
-            TrackConn(c.DescendantAdded:Connect(AttachWatcher))
-        end)
-    end
+    if c.Name == "PlayerGui" then HookContainer(c) end
 end))
+
+pcall(function() HookContainer(game:GetService("CoreGui")) end)
+pcall(function() if type(gethui) == "function" then HookContainer(gethui()) end end)
 
 local hookfunction = hookfunction or hookfunc
 if type(hookfunction) == "function" then
     local function SinkPrint(tbl, fnName)
-        if type(tbl) == "table" and tbl[fnName] then
-            local old
-            old = hookfunction(tbl[fnName], function(...)
-                local args = {...}
-                for i = 1, #args do
-                    local s = tostring(args[i])
-                    if HasTargetOnly(s) or s:find("Something unexpectedly tried to set the parent") then return end
-                end
-                return old(...)
-            end)
-        end
+        pcall(function()
+            if type(tbl) == "table" and tbl[fnName] then
+                local old
+                old = hookfunction(tbl[fnName], function(...)
+                    local args = {...}
+                    for i = 1, #args do
+                        local strVal = tostring(args[i])
+                        if HasTargetOnly(strVal) or strVal:find("Something unexpectedly tried to set the parent") then return end
+                    end
+                    return old(...)
+                end)
+            end
+        end)
     end
-    SinkPrint(getfenv(), "print")
-    SinkPrint(getfenv(), "warn")
+    pcall(function() SinkPrint(getfenv(), "print") end)
+    pcall(function() SinkPrint(getfenv(), "warn") end)
     if type(getgenv) == "function" then
         local g = getgenv()
-        SinkPrint(g, "print")
-        SinkPrint(g, "warn")
-        SinkPrint(g, "rconsoleprint")
-        SinkPrint(g, "consoleprint")
+        pcall(function() SinkPrint(g, "print") end)
+        pcall(function() SinkPrint(g, "warn") end)
+        pcall(function() SinkPrint(g, "rconsoleprint") end)
+        pcall(function() SinkPrint(g, "consoleprint") end)
     end
 end
 
-TrackConn(UserInputService.InputBegan:Connect(function(input, _)
-    local k = input.KeyCode
-    if k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl or k == Enum.KeyCode.DPadUp then
-        ToggleBoost()
-    end
-end))
-
--- Equalized Upward Boost Engine
-local currentHumanoid = nil
-local currentRootPart = nil
-local charConns = {}
-local lastBoostTime = 0
+-- Anti-Stacking Boost Engine
 local shiftTaps = {}
 local l3Taps = {}
 local isArmed = false
 local armedByController = false
 local armedExpiration = 0
+local lastBoostTime = 0
 
 local function RecordTap(tapArray, isController)
+    if _G.ShystxCurrentSession ~= thisSession then return end
     local now = os.clock()
     table.insert(tapArray, now)
-    while #tapArray > 0 and (now - tapArray[1] > 0.50) do
+    while #tapArray > 0 and (now - tapArray[1] > 0.65) do
         table.remove(tapArray, 1)
     end
     if #tapArray >= 2 then
         table.clear(tapArray)
         isArmed = true
         armedByController = isController or false
-        armedExpiration = now + 1.25
+        armedExpiration = now + 2.50
     end
 end
 
@@ -219,61 +228,50 @@ local function GetLinearVel(part)
     return v or Vector3.zero
 end
 
-local function CleanupCharacter()
-    for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
-    charConns = {}
-    currentHumanoid = nil
-    currentRootPart = nil
-end
-
 local function ExecuteBoost()
-    if _G.ShystxBoostEnabled ~= true then return end
+    -- Concurrency & Session check: Prevent any duplicate instance from firing
+    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxIsBoosting then return end
+
     local now = os.clock()
     if not isArmed or (now > armedExpiration) then
         isArmed = false
         return
     end
-    if now - lastBoostTime < 0.20 then return end
+    if now - lastBoostTime < 0.35 then return end
 
-    if not currentRootPart or not currentRootPart.Parent or not currentHumanoid then
-        local char = LocalPlayer.Character
-        if char then
-            currentRootPart = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-            currentHumanoid = char:FindFirstChild("Humanoid")
-        end
-    end
-    if not currentRootPart or not currentHumanoid then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
 
     local wasController = armedByController
     isArmed = false
     lastBoostTime = now
+    _G.ShystxIsBoosting = true
 
     task.spawn(function()
         for i = 1, #FIXED_UPWARD_CURVE do
-            if not currentRootPart or not currentRootPart.Parent or _G.ShystxBoostEnabled ~= true then break end
-            local curVel = GetLinearVel(currentRootPart)
+            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent then break end
+            local curVel = GetLinearVel(root)
             local boostVal = FIXED_UPWARD_CURVE[i] * (wasController and 0.78 or 1.0)
-            SetLinearVel(currentRootPart, curVel.X, curVel.Y + boostVal, curVel.Z)
+            SetLinearVel(root, curVel.X, curVel.Y + boostVal, curVel.Z)
             RunService.Heartbeat:Wait()
         end
+        _G.ShystxIsBoosting = false
     end)
 end
 
+local charConns = {}
 local function SetupCharacter(char)
-    if not char then return end
-    CleanupCharacter()
+    if not char or _G.ShystxCurrentSession ~= thisSession then return end
+    for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
+    charConns = {}
 
-    local humanoid = char:WaitForChild("Humanoid", 5)
-    local root = char:WaitForChild("HumanoidRootPart", 5) or char:WaitForChild("Torso", 5)
-    if not humanoid or not root then return end
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
 
-    currentHumanoid = humanoid
-    currentRootPart = root
-
-    pcall(function() humanoid.PlatformStand = false end)
-    if humanoid:GetState() == Enum.HumanoidStateType.Physics then humanoid:ChangeState(Enum.HumanoidStateType.Running) end
-
-    local scConn = humanoid.StateChanged:Connect(function(_, st)
+    local scConn = hum.StateChanged:Connect(function(_, st)
         if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) and isArmed then
             ExecuteBoost()
         end
@@ -281,7 +279,7 @@ local function SetupCharacter(char)
     table.insert(charConns, scConn)
     TrackConn(scConn)
 
-    local jConn = humanoid.Jumping:Connect(function(active)
+    local jConn = hum.Jumping:Connect(function(active)
         if active and isArmed then ExecuteBoost() end
     end)
     table.insert(charConns, jConn)
@@ -289,13 +287,14 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(function()
-    if isArmed and _G.ShystxBoostEnabled == true then ExecuteBoost() end
+    if isArmed then ExecuteBoost() end
 end))
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
-    if inp.KeyCode == Enum.KeyCode.LeftShift then
+    local k = inp.KeyCode
+    if k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.RightShift then
         RecordTap(shiftTaps, false)
-    elseif inp.KeyCode == Enum.KeyCode.ButtonL3 then
+    elseif k == Enum.KeyCode.ButtonL3 then
         RecordTap(l3Taps, true)
     end
 end))
@@ -307,8 +306,6 @@ TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
 local fullSource = string.format(template, template)
 local runner = loadstring(fullSource)
 if type(runner) == "function" then pcall(runner) end
-
-_G.ShystxBoostEnabled = true
 
 -- =========================================================================
 -- ANIMATED YB STRAP GUI WITH ADVANCED FLAG EDITOR
@@ -339,9 +336,6 @@ local makefolder = makefolder or (type(getgenv) == "function" and getgenv().make
 local writefile = writefile or (type(getgenv) == "function" and getgenv().writefile)
 local readfile = readfile or (type(getgenv) == "function" and getgenv().readfile)
 
-_G.ShystxEngineActive = true
-_G.ShystxActiveFlagsCache = {}
-
 local virtualFiles = {}
 local function SafeWriteFile(path, content)
     virtualFiles[path] = content
@@ -369,8 +363,6 @@ local F_PATH, CONFIGS_PATH = "ZoneStraps/FFlags.json", "ZoneStraps/Configs.json"
 if type(isfolder) == "function" and type(makefolder) == "function" then
     pcall(function() if not isfolder("ZoneStraps") then makefolder("ZoneStraps") end end)
 end
-if SafeReadFile(F_PATH) == "{}" then SafeWriteFile(F_PATH, HttpService:JSONEncode({["FIntSimDefaultFluidForceEnabled"] = 1})) end
-if SafeReadFile(CONFIGS_PATH) == "{}" then SafeWriteFile(CONFIGS_PATH, "{}") end
 
 local function CleanFlagName(flag)
     return flag:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", "")
@@ -445,7 +437,7 @@ end
 
 local ScreenGui = New("ScreenGui", {Name = "yblazy_ffm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, parentGui)
 local Main = New("Frame", {Size = UDim2.new(0, 590, 0, 410), Position = UDim2.new(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.Bg, BorderSizePixel = 0, ClipsDescendants = true}, ScreenGui, 12)
-local stroke = New("UIStroke", {Thickness = 1.4, Color = C.Border}, Main)
+New("UIStroke", {Thickness = 1.4, Color = C.Border}, Main)
 local UiScale = New("UIScale", {Scale = 0.01}, Main)
 Tween(UiScale, {Scale = 0.76}, 0.35)
 
@@ -483,11 +475,9 @@ local function RefreshLists()
     local dec = AutoRepairJSON(cnt)
     if type(dec) == "table" then
         for k, v in pairs(dec) do
-            if not k:lower():find("fluidforceenabled") then
-                local R = New("Frame", {Size = UDim2.new(1, -8, 0, 28), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0}, FlagScroll, 6)
-                New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.StatGreen or C.StatRed, BorderSizePixel = 0}, R, 3)
-                New("TextLabel", {Size = UDim2.new(1, -20, 1, 0), Position = UDim2.new(0, 26, 0, 0), BackgroundTransparency = 1, Text = k .. " = " .. tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left}, R)
-            end
+            local R = New("Frame", {Size = UDim2.new(1, -8, 0, 28), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0}, FlagScroll, 6)
+            New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.StatGreen or C.StatRed, BorderSizePixel = 0}, R, 3)
+            New("TextLabel", {Size = UDim2.new(1, -20, 1, 0), Position = UDim2.new(0, 26, 0, 0), BackgroundTransparency = 1, Text = k .. " = " .. tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left}, R)
         end
     end
 
@@ -539,7 +529,7 @@ TabSavedBtn.MouseButton1Click:Connect(function()
 end)
 
 local BotBar = New("Frame", {Size = UDim2.new(1, -40, 0, 38), Position = UDim2.new(0, 20, 1, -50), BackgroundTransparency = 1}, Main)
-local BL = New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5)}, BotBar)
+New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5)}, BotBar)
 
 local function MakeActionBtn(txt, w, col)
     local B = New("TextButton", {Size = UDim2.new(0, w, 1, 0), BackgroundColor3 = col or C.BtnBg, BorderSizePixel = 0, Text = txt, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = col and C.TxtWhite or C.TxtDark}, BotBar, 6)
@@ -572,7 +562,7 @@ local function PopulateEditList(query)
     local filter = (query or ""):lower():gsub(" ", "")
     if type(dec) == "table" then
         for k, v in pairs(dec) do
-            if not k:lower():find("fluidforceenabled") and (filter == "" or k:lower():find(filter, 1, true)) then
+            if filter == "" or k:lower():find(filter, 1, true) then
                 local row = New("Frame", {Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = C.CBoxBg, BorderSizePixel = 0, ZIndex = 11}, EditScroll, 6)
                 New("TextLabel", {Size = UDim2.new(1, -165, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = k, Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11}, row)
                 local valBox = New("TextBox", {Size = UDim2.new(0, 80, 0, 22), Position = UDim2.new(1, -150, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 11}, row, 4)
@@ -642,7 +632,6 @@ ImpAppend.MouseButton1Click:Connect(function()
         local currentFlags = AutoRepairJSON(SafeReadFile(F_PATH))
         if type(newFlags) == "table" and type(currentFlags) == "table" then
             for k, v in pairs(newFlags) do currentFlags[k] = v end
-            currentFlags["FIntSimDefaultFluidForceEnabled"] = 1
             SafeWriteFile(F_PATH, HttpService:JSONEncode(currentFlags))
             RefreshLists()
         end
@@ -654,7 +643,6 @@ ImpReplace.MouseButton1Click:Connect(function()
     if ImpBox.Text ~= "" then
         local newFlags = AutoRepairJSON(ImpBox.Text)
         if type(newFlags) == "table" then
-            newFlags["FIntSimDefaultFluidForceEnabled"] = 1
             SafeWriteFile(F_PATH, HttpService:JSONEncode(newFlags))
             RefreshLists()
         end
@@ -664,8 +652,7 @@ ImpReplace.MouseButton1Click:Connect(function()
 end)
 
 ClearBtn.MouseButton1Click:Connect(function()
-    _G.ShystxEngineActive, _G.ShystxBoostEnabled, _G.ShystxActiveFlagsCache = false, false, {}
-    SafeWriteFile(F_PATH, HttpService:JSONEncode({["FIntSimDefaultFluidForceEnabled"] = 1}))
+    SafeWriteFile(F_PATH, "{}")
     RefreshLists()
 end)
 
@@ -673,18 +660,9 @@ InjectBtn.MouseButton1Click:Connect(function()
     local decoded = AutoRepairJSON(SafeReadFile(F_PATH))
     local count = 0
     if type(decoded) == "table" then
-        decoded["FIntSimDefaultFluidForceEnabled"] = 1
-        for k in pairs(decoded) do if not k:lower():find("fluidforceenabled") then count = count + 1 end end
+        for _ in pairs(decoded) do count = count + 1 end
     end
     SafeWriteFile(F_PATH, HttpService:JSONEncode(decoded))
-    _G.ShystxActiveFlagsCache, _G.ShystxEngineActive, _G.ShystxBoostEnabled = decoded, true, true
-
-    local function QueueScript(code)
-        local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
-        if type(q) == "function" then pcall(function() q(code) end) end
-    end
-    QueueScript(fullSource)
-    pcall(function() LocalPlayer.OnTeleport:Connect(function() QueueScript(fullSource) end) end)
 
     if type(decoded) == "table" then
         for flagName, val in pairs(decoded) do TrySetFlag(flagName, val) end
