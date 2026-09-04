@@ -1,30 +1,10 @@
 -- =========================================================================
--- YB STRAP - STEALTH PRO SUITE (FLUIDFORCE MASKED - COMPLETE & UNCUT)
+-- YB STRAP - STEALTH PRO SUITE (ZERO-SPACE SINK & FLUIDFORCE MASK - COMPLETE)
 -- =========================================================================
 
+if not game:IsLoaded() then pcall(function() game.Loaded:Wait() end) end
+
 -- Root Singleton Engine Guard
-if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
-    for _, conn in ipairs(_G.ShystxGlobalConns) do
-        if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
-    end
-    table.clear(_G.ShystxGlobalConns)
-end
-_G.ShystxGlobalConns = {}
-
-local sessionToken = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
-_G.ShystxCurrentSession = sessionToken
-_G.ShystxIsBoosting = false
-_G.ShystxBoostEnabled = true
-
-local function SafeQueue(code)
-    local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
-    if type(fn) == "function" then pcall(function() fn(code) end) end
-end
-
-local template = [==[
-local s = %q
-if not game:IsLoaded() then game.Loaded:Wait() end
-
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
     for _, conn in ipairs(_G.ShystxGlobalConns) do
         if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
@@ -36,11 +16,14 @@ _G.ShystxGlobalConns = {}
 local thisSession = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
 _G.ShystxCurrentSession = thisSession
 _G.ShystxIsBoosting = false
-_G.ShystxBoostEnabled = true
+_G.ShystxFlagsApplied = false
+_G.ShystxBoostEnabled = false
 
 local Players = game:GetService("Players")
-repeat task.wait(0.1) until Players.LocalPlayer
-local LocalPlayer = Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local RunService = game:GetService("RunService")
 
 local function TrackConn(c)
     if c then table.insert(_G.ShystxGlobalConns, c) end
@@ -50,12 +33,6 @@ end
 local function SafeQueue(code)
     local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
     if type(fn) == "function" then pcall(function() fn(code) end) end
-end
-
-if not _G.ShystxTeleportRegistered then
-    _G.ShystxTeleportRegistered = true
-    SafeQueue(string.format(s, s))
-    TrackConn(LocalPlayer.OnTeleport:Connect(function() SafeQueue(string.format(s, s)) end))
 end
 
 local setfflag = setfflag or set_fflag or setflag or set_flag
@@ -71,7 +48,7 @@ end
 
 local function TrySetFlag(flagName, val)
     if type(setfflag) ~= "function" then return false end
-    local clean = CleanFlag(flagName)
+    local clean = CleanFlag(name)
     local ok = pcall(function() setfflag(flagName, val) end)
     if ok then return true end
     ok = pcall(function() setfflag(flagName, tostring(val)) end)
@@ -81,41 +58,329 @@ local function TrySetFlag(flagName, val)
     return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
--- Keymask & Flag Sanitizer (stealth masking of Controls and FluidForce)
+-- FluidForce flag will apply along with other flags upon clicking Apply Flags
+
+-- Silent Background Boost Engine
+local shiftTaps = {}
+local l3Taps = {}
+local isArmed = false
+local armedByController = false
+local armedExpiration = 0
+local lastBoostTime = 0
+local lastToggleTime = 0
+
+local function ToggleBoost()
+    if not _G.ShystxFlagsApplied then return end
+    local now = os.clock()
+    if now - lastToggleTime < 0.25 then return end
+    lastToggleTime = now
+    _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
+    if not _G.ShystxBoostEnabled then
+        isArmed = false
+        table.clear(shiftTaps)
+        table.clear(l3Taps)
+    end
+end
+
+local TARGET_KEYS = {
+    [Enum.KeyCode.DPadUp] = true,
+    [Enum.KeyCode.LeftControl] = true,
+    [Enum.KeyCode.RightControl] = true,
+    ["DPadUp"] = true,
+    ["LeftControl"] = true,
+    ["RightControl"] = true
+}
+
+local TARGET_PATTERNS = {
+    "leftcontrol",
+    "rightcontrol",
+    "dpadup",
+    "%[key release%]",
+    "%[key press%]",
+    "%[key hold%]",
+    "key release",
+    "key press",
+    "key hold",
+    "key:%s*leftcontrol",
+    "key:%s*rightcontrol",
+    "key:%s*dpadup",
+    "fluidforce",
+    "simdefaultfluidforceenabled",
+    "missing argument #3",
+    "modules%.common%.locales",
+    "locales%.en%-us",
+    "coregui%.20172",
+    "script 'coregui"
+}
+
 local function HasTargetOnly(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
-    return str:find("LeftControl") or str:find("RightControl") or str:find("DPadUp") or lower:find("fluidforce") or lower:find("simdefaultfluidforceenabled")
+    for _, pat in ipairs(TARGET_PATTERNS) do
+        if lower:find(pat) then
+            return true
+        end
+    end
+    return false
 end
 
 local function StripTargetLines(str)
+    if type(str) ~= "string" then return str end
     local lines = {}
     for line in str:gmatch("[^\r\n]+") do
-        if not HasTargetOnly(line) and not (line:gsub(" ", ""):gsub("\t", "") == "") then
+        if not HasTargetOnly(line) and not line:match("^%s*$") then
             table.insert(lines, line)
         end
     end
     return table.concat(lines, "\n")
 end
 
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+-- 1. Engine-Level ContextAction Priority Sink (Swallows keypress & key release before any space/line is made)
+pcall(function()
+    ContextActionService:BindActionAtPriority("ShystxZeroSpaceSink", function(actionName, inputState, inputObject)
+        if inputState == Enum.UserInputState.Begin then
+            ToggleBoost()
+        end
+        return Enum.ContextActionResult.Sink
+    end, false, 2147483647, Enum.KeyCode.LeftControl, Enum.KeyCode.RightControl, Enum.KeyCode.DPadUp)
+end)
 
+-- 2. Drop Keylogger Connection Callbacks & Prevent CoreGui Missing Argument #3
+local getconnections = getconnections or (type(getgenv) == "function" and getgenv().getconnections)
+local hookfunction = hookfunction or hookfunc or (type(getgenv) == "function" and getgenv().hookfunction)
+local newcclosure = newcclosure or function(f) return f end
+
+local function IsCoreConnection(conn)
+    local isCore = false
+    pcall(function()
+        if type(getinfo) == "function" and conn and conn.Function then
+            local info = getinfo(conn.Function)
+            if info and info.source then
+                local s = info.source:lower()
+                if s:find("coregui") or s:find("robloxgui") or s:find("playerscripts.playermodule") then
+                    isCore = true
+                end
+            end
+        end
+    end)
+    return isCore
+end
+
+local hookedFns = setmetatable({}, {__mode = "k"})
+
+local function FilterConnection(conn)
+    if not conn or not conn.Function or hookedFns[conn.Function] then return end
+    if IsCoreConnection(conn) then return end
+
+    pcall(function()
+        local oldFn = conn.Function
+        local wrapped = newcclosure(function(...)
+            local args = {...}
+            local input = args[1]
+            if input then
+                local k = nil
+                pcall(function() k = input.KeyCode end)
+                if k and (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
+                    return
+                end
+            end
+            return oldFn(...)
+        end)
+
+        if type(hookfunction) == "function" then
+            hookfunction(conn.Function, wrapped)
+        else
+            conn.Function = wrapped
+        end
+        hookedFns[conn.Function] = true
+    end)
+end
+
+local function FilterLogConnection(conn)
+    if not conn or not conn.Function or hookedFns[conn.Function] then return end
+    if IsCoreConnection(conn) then return end
+
+    pcall(function()
+        local oldFn = conn.Function
+        local wrapped = newcclosure(function(...)
+            local args = {...}
+            local msg = tostring(args[1] or "")
+            if HasTargetOnly(msg) then
+                return
+            end
+            return oldFn(...)
+        end)
+
+        if type(hookfunction) == "function" then
+            hookfunction(conn.Function, wrapped)
+        else
+            conn.Function = wrapped
+        end
+        hookedFns[conn.Function] = true
+    end)
+end
+
+local function ScanAllConnections()
+    if type(getconnections) ~= "function" then return end
+    pcall(function()
+        for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do FilterConnection(conn) end
+        for _, conn in ipairs(getconnections(UserInputService.InputEnded)) do FilterConnection(conn) end
+        local LogService = game:GetService("LogService")
+        if LogService and LogService.MessageOut then
+            for _, conn in ipairs(getconnections(LogService.MessageOut)) do FilterLogConnection(conn) end
+        end
+    end)
+end
+
+ScanAllConnections()
+task.spawn(function()
+    while _G.ShystxCurrentSession == thisSession do
+        task.wait(1.5)
+        ScanAllConnections()
+    end
+end)
+
+-- Metamethod __namecall protection for runtime connection registration
+pcall(function()
+    if type(getrawmetatable) == "function" and type(hookmetamethod) == "function" then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+            if (method == "Connect" or method == "connect") and (self == UserInputService.InputBegan or self == UserInputService.InputEnded) then
+                local fn = args[1]
+                if type(fn) == "function" then
+                    local oldFn = fn
+                    args[1] = newcclosure(function(...)
+                        local cArgs = {...}
+                        local input = cArgs[1]
+                        if input then
+                            local k = nil
+                            pcall(function() k = input.KeyCode end)
+                            if k and (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
+                                return
+                            end
+                        end
+                        return oldFn(...)
+                    end)
+                    return oldNamecall(self, table.unpack(args))
+                end
+            end
+            return oldNamecall(self, ...)
+        end))
+    end
+end)
+
+-- Stealth Key State Query Hooks
+pcall(function()
+    if type(hookfunction) == "function" and typeof(UserInputService.IsKeyDown) == "function" then
+        local oldIsKeyDown
+        oldIsKeyDown = hookfunction(UserInputService.IsKeyDown, newcclosure(function(self, key, ...)
+            if TARGET_KEYS[key] or (typeof(key) == "EnumItem" and TARGET_KEYS[key.Name]) then
+                return false
+            end
+            return oldIsKeyDown(self, key, ...)
+        end))
+    end
+end)
+
+pcall(function()
+    if type(hookfunction) == "function" and typeof(UserInputService.GetKeysPressed) == "function" then
+        local oldGetKeysPressed
+        oldGetKeysPressed = hookfunction(UserInputService.GetKeysPressed, newcclosure(function(self, ...)
+            local keys = oldGetKeysPressed(self, ...)
+            if type(keys) == "table" then
+                local filtered = {}
+                for _, kObj in ipairs(keys) do
+                    local k = kObj.KeyCode
+                    if not (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
+                        table.insert(filtered, kObj)
+                    end
+                end
+                return filtered
+            end
+            return keys
+        end))
+    end
+end)
+
+-- 3. Zero-Space Console / Print Sinker Across All Environments
+if type(hookfunction) == "function" then
+    local function SinkPrint(tbl, fnName)
+        pcall(function()
+            if type(tbl) == "table" and tbl[fnName] then
+                local old
+                old = hookfunction(tbl[fnName], newcclosure(function(...)
+                    local args = {...}
+                    for i = 1, #args do
+                        local strVal = tostring(args[i])
+                        if HasTargetOnly(strVal) or strVal:find("Something unexpectedly tried to set the parent") then
+                            return
+                        end
+                    end
+                    return old(...)
+                end))
+            end
+        end)
+    end
+
+    pcall(function() SinkPrint(getfenv(), "print") end)
+    pcall(function() SinkPrint(getfenv(), "warn") end)
+
+    local renv = (type(getrenv) == "function" and getrenv()) or _G
+    pcall(function() SinkPrint(renv, "print") end)
+    pcall(function() SinkPrint(renv, "warn") end)
+    pcall(function() SinkPrint(renv, "info") end)
+
+    if type(getgenv) == "function" then
+        local g = getgenv()
+        pcall(function() SinkPrint(g, "print") end)
+        pcall(function() SinkPrint(g, "warn") end)
+        pcall(function() SinkPrint(g, "rconsoleprint") end)
+        pcall(function() SinkPrint(g, "rconsolewarn") end)
+        pcall(function() SinkPrint(g, "consoleprint") end)
+    end
+
+    pcall(function()
+        local ts = game:GetService("TestService")
+        if ts and ts.Message then
+            local oldMsg
+            oldMsg = hookfunction(ts.Message, newcclosure(function(self, msg, ...)
+                if HasTargetOnly(tostring(msg)) then return end
+                return oldMsg(self, msg, ...)
+            end))
+        end
+    end)
+end
+
+-- 4. Zero-Space Pre-Render GUI Collapser (Completely removes rows so zero blank lines or empty spaces remain)
 local isSanitizing = false
 local function SafeCollapse(inst)
     pcall(function()
+        inst.Text = ""
         inst.Visible = false
-        if inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("TextButton") then
-            inst.Text = ""
-            inst.TextTransparency = 1
-        end
+        inst.TextTransparency = 1
         inst.BackgroundTransparency = 1
         inst.Size = UDim2.new(0, 0, 0, 0)
+
         local p = inst.Parent
-        if p and p:IsA("GuiObject") and p.Name ~= "ClientLog" and not p:IsA("ScreenGui") and not p:IsA("ScrollingFrame") then
-            p.Visible = false
-            p.BackgroundTransparency = 1
-            p.Size = UDim2.new(0, 0, 0, 0)
+        if p then
+            if p:IsA("ScrollingFrame") then
+                pcall(function() inst.Parent = nil end)
+            elseif p:IsA("GuiObject") and not p:IsA("ScreenGui") then
+                p.Visible = false
+                p.BackgroundTransparency = 1
+                p.Size = UDim2.new(0, 0, 0, 0)
+                pcall(function()
+                    for _, child in ipairs(p:GetChildren()) do
+                        if child:IsA("GuiObject") then
+                            child.Visible = false
+                            child.Size = UDim2.new(0, 0, 0, 0)
+                        end
+                    end
+                end)
+                pcall(function() p.Parent = nil end)
+            end
         end
     end)
 end
@@ -129,7 +394,7 @@ local function AttachWatcher(inst)
             if t and HasTargetOnly(t) then
                 isSanitizing = true
                 local cleaned = StripTargetLines(t)
-                if cleaned == "" or (cleaned:gsub(" ", ""):gsub("\t", "") == "") then
+                if cleaned == "" or cleaned:match("^%s*$") then
                     SafeCollapse(inst)
                 else
                     inst.Text = cleaned
@@ -164,57 +429,8 @@ end))
 pcall(function() HookContainer(game:GetService("CoreGui")) end)
 pcall(function() if type(gethui) == "function" then HookContainer(gethui()) end end)
 
-local hookfunction = hookfunction or hookfunc
-if type(hookfunction) == "function" then
-    local function SinkPrint(tbl, fnName)
-        pcall(function()
-            if type(tbl) == "table" and tbl[fnName] then
-                local old
-                old = hookfunction(tbl[fnName], function(...)
-                    local args = {...}
-                    for i = 1, #args do
-                        local strVal = tostring(args[i])
-                        if HasTargetOnly(strVal) or strVal:find("Something unexpectedly tried to set the parent") then return end
-                    end
-                    return old(...)
-                end)
-            end
-        end)
-    end
-    pcall(function() SinkPrint(getfenv(), "print") end)
-    pcall(function() SinkPrint(getfenv(), "warn") end)
-    if type(getgenv) == "function" then
-        local g = getgenv()
-        pcall(function() SinkPrint(g, "print") end)
-        pcall(function() SinkPrint(g, "warn") end)
-        pcall(function() SinkPrint(g, "rconsoleprint") end)
-        pcall(function() SinkPrint(g, "consoleprint") end)
-    end
-end
-
--- Silent Background Boost Engine
-local shiftTaps = {}
-local l3Taps = {}
-local isArmed = false
-local armedByController = false
-local armedExpiration = 0
-local lastBoostTime = 0
-local lastToggleTime = 0
-
-local function ToggleBoost()
-    local now = os.clock()
-    if now - lastToggleTime < 0.25 then return end
-    lastToggleTime = now
-    _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
-    if not _G.ShystxBoostEnabled then
-        isArmed = false
-        table.clear(shiftTaps)
-        table.clear(l3Taps)
-    end
-end
-
 local function RecordTap(tapArray, isController)
-    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true then return end
+    if _G.ShystxCurrentSession ~= thisSession or not _G.ShystxFlagsApplied or _G.ShystxBoostEnabled ~= true then return end
     local now = os.clock()
     table.insert(tapArray, now)
     while #tapArray > 0 and (now - tapArray[1] > 0.65) do
@@ -244,7 +460,7 @@ local function GetLinearVel(part)
 end
 
 local function ExecuteBoost()
-    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxIsBoosting then return end
+    if _G.ShystxCurrentSession ~= thisSession or not _G.ShystxFlagsApplied or _G.ShystxBoostEnabled ~= true or _G.ShystxIsBoosting then return end
 
     local now = os.clock()
     if not isArmed or (now > armedExpiration) then
@@ -286,7 +502,7 @@ local function SetupCharacter(char)
     if not hum then return end
 
     local scConn = hum.StateChanged:Connect(function(_, st)
-        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) and isArmed then
+        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) and isArmed and _G.ShystxFlagsApplied then
             ExecuteBoost()
         end
     end)
@@ -294,14 +510,14 @@ local function SetupCharacter(char)
     TrackConn(scConn)
 
     local jConn = hum.Jumping:Connect(function(active)
-        if active and isArmed then ExecuteBoost() end
+        if active and isArmed and _G.ShystxFlagsApplied then ExecuteBoost() end
     end)
     table.insert(charConns, jConn)
     TrackConn(jConn)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(function()
-    if isArmed and _G.ShystxBoostEnabled == true then ExecuteBoost() end
+    if isArmed and _G.ShystxFlagsApplied and _G.ShystxBoostEnabled == true then ExecuteBoost() end
 end))
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
@@ -317,11 +533,6 @@ end))
 
 if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
 TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
-]==]
-
-local fullSource = string.format(template, template)
-local runner = loadstring(fullSource)
-if type(runner) == "function" then pcall(runner) end
 
 -- =========================================================================
 -- PROFESSIONAL FASTFLAG STUDIO (ANIMATED, PARTICLE FX, MULTI-CONFIG)
@@ -400,12 +611,6 @@ local function CleanFlagName(flag)
     return flag:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", "")
 end
 
-local function IsHiddenFlag(flagName)
-    if type(flagName) ~= "string" then return false end
-    local lower = flagName:lower()
-    return lower:find("fluidforce") or lower:find("simdefaultfluidforceenabled")
-end
-
 local function AutoRepairJSON(rawText)
     if type(rawText) ~= "string" or (rawText:gsub(" ", ""):gsub("\t", "") == "") then return {}, "{}" end
     local text = rawText:gsub("//[^\r\n]*", ""):gsub("/%*.-%*/", ""):gsub(",%s*}", "}"):gsub(",%s*]", "]")
@@ -439,37 +644,33 @@ local function VerifyFlagStatus(flagName)
     return (s and r) or false
 end
 
-local function TrySetFlag(flagName, val)
-    if type(setfflag) ~= "function" then return false end
-    local clean = CleanFlagName(flagName)
-    local ok = pcall(function() setfflag(flagName, val) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(flagName, tostring(val)) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(clean, val) end)
-    if ok then return true end
-    return pcall(function() setfflag(clean, tostring(val)) end)
+local function IsHiddenFlag(flagName)
+    if type(flagName) ~= "string" then return false end
+    local lower = flagName:lower()
+    return lower:find("fluidforce") ~= nil or lower:find("simdefaultfluidforceenabled") ~= nil
 end
 
 local C = {
-    Bg = Color3.fromRGB(11, 13, 19),
-    TBar = Color3.fromRGB(15, 18, 26),
-    PanelBg = Color3.fromRGB(17, 21, 30),
-    EditorBg = Color3.fromRGB(9, 11, 16),
-    CardBg = Color3.fromRGB(14, 18, 25),
-    Border = Color3.fromRGB(32, 40, 56),
-    BorderLight = Color3.fromRGB(48, 59, 82),
+    Bg = Color3.fromRGB(11, 13, 18),
+    TBar = Color3.fromRGB(16, 19, 27),
+    Red = Color3.fromRGB(244, 63, 94),
+    DarkRed = Color3.fromRGB(190, 18, 60),
     Blue = Color3.fromRGB(59, 130, 246),
     DarkBlue = Color3.fromRGB(29, 78, 216),
-    Red = Color3.fromRGB(244, 63, 94),
-    DarkRed = Color3.fromRGB(159, 18, 57),
-    Green = Color3.fromRGB(16, 185, 129),
+    PanelBg = Color3.fromRGB(18, 22, 31),
+    CardBg = Color3.fromRGB(14, 17, 24),
+    EditorBg = Color3.fromRGB(9, 11, 15),
     TxtDark = Color3.fromRGB(248, 250, 252),
     TxtGray = Color3.fromRGB(148, 163, 184),
     TxtMuted = Color3.fromRGB(100, 116, 139),
     TxtWhite = Color3.fromRGB(255, 255, 255),
-    BtnBg = Color3.fromRGB(21, 27, 38),
-    BtnHover = Color3.fromRGB(31, 39, 56)
+    BtnBg = Color3.fromRGB(22, 28, 38),
+    BtnHover = Color3.fromRGB(33, 41, 58),
+    Border = Color3.fromRGB(30, 38, 52),
+    BorderLight = Color3.fromRGB(45, 55, 72),
+    Green = Color3.fromRGB(16, 185, 129),
+    DarkGreen = Color3.fromRGB(5, 150, 105),
+    Yellow = Color3.fromRGB(234, 179, 8)
 }
 
 local function New(cls, props, p, rad)
@@ -480,281 +681,273 @@ local function New(cls, props, p, rad)
     return obj
 end
 
-local function Tween(inst, props, dur, style, dir)
-    local tw = TweenService:Create(inst, TweenInfo.new(dur or 0.25, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out), props)
+local function Tween(instance, props, dur, style, dir)
+    local tw = TweenService:Create(
+        instance,
+        TweenInfo.new(dur or 0.22, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
+        props
+    )
     tw:Play()
     return tw
 end
 
+-- Master ScreenGui & Main Frame
 local ScreenGui = New("ScreenGui", {Name = "yblazy_ffm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, parentGui)
 local Main = New("Frame", {
-    Size = UDim2.new(0, 600, 0, 425),
+    Size = UDim2.new(0, 610, 0, 420),
     Position = UDim2.new(0.5, 0, 0.5, 0),
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = C.Bg,
     BorderSizePixel = 0,
     ClipsDescendants = true
 }, ScreenGui, 12)
-New("UIStroke", {Thickness = 1.4, Color = C.Border}, Main)
 
+New("UIStroke", {Thickness = 1.6, Color = C.BorderLight}, Main)
 local UiScale = New("UIScale", {Scale = 0.01}, Main)
-Tween(UiScale, {Scale = 0.78}, 0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+Tween(UiScale, {Scale = 0.78}, 0.35, Enum.EasingStyle.Back)
 
--- Floating Ambient Particle Engine
-local ParticleBox = New("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 1}, Main)
+-- Floating Particle Canvas
+local ParticleCanvas = New("Frame", {
+    Size = UDim2.new(1, 0, 1, 0),
+    BackgroundTransparency = 1,
+    ClipsDescendants = true,
+    ZIndex = 1
+}, Main)
+
 local particles = {}
-local pColors = {Color3.fromRGB(59, 130, 246), Color3.fromRGB(96, 165, 250), Color3.fromRGB(244, 63, 94), Color3.fromRGB(226, 232, 240)}
-
-for i = 1, 24 do
+local PARTICLE_COUNT = 24
+for i = 1, PARTICLE_COUNT do
     local sz = math.random(2, 4)
-    local pObj = New("Frame", {
+    local isBlue = (i % 2 == 0)
+    local p = New("Frame", {
         Size = UDim2.new(0, sz, 0, sz),
-        BackgroundColor3 = pColors[math.random(1, #pColors)],
-        BackgroundTransparency = 0.60 + math.random() * 0.30,
         Position = UDim2.new(math.random(), 0, math.random(), 0),
+        BackgroundColor3 = isBlue and C.Blue or C.Red,
+        BackgroundTransparency = math.random(60, 90) / 100,
         BorderSizePixel = 0,
         ZIndex = 1
-    }, ParticleBox, sz)
+    }, ParticleCanvas, 3)
     table.insert(particles, {
-        frame = pObj,
-        x = math.random(),
-        y = math.random(),
-        speed = 0.035 + math.random() * 0.055,
-        phase = math.random() * math.pi * 2,
-        sway = 0.012 + math.random() * 0.018
+        inst = p,
+        vx = (math.random(-15, 15) / 100) * 0.35,
+        vy = -(math.random(15, 45) / 100) * 0.35
     })
 end
 
 local pConn = RunService.RenderStepped:Connect(function(dt)
     if not Main or not Main.Parent or not Main.Visible then return end
     for _, pt in ipairs(particles) do
-        pt.y = pt.y - pt.speed * dt
-        pt.phase = pt.phase + dt * 1.4
-        local curX = pt.x + math.sin(pt.phase) * pt.sway
-        if pt.y < -0.04 then
-            pt.y = 1.04
-            pt.x = math.random()
-        end
-        pt.frame.Position = UDim2.new(curX % 1, 0, pt.y, 0)
+        local cur = pt.inst.Position
+        local nx = cur.X.Scale + pt.vx * dt
+        local ny = cur.Y.Scale + pt.vy * dt
+        if ny < -0.05 then ny = 1.05 nx = math.random() end
+        if nx < -0.05 then nx = 1.05 elseif nx > 1.05 then nx = -0.05 end
+        pt.inst.Position = UDim2.new(nx, 0, ny, 0)
     end
 end)
 
--- Animated Toast Notification System
-local ToastBox = New("Frame", {
-    Size = UDim2.new(0, 320, 0, 34),
-    Position = UDim2.new(0.5, 0, 0, -45),
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = C.TBar,
-    BorderSizePixel = 0,
-    ZIndex = 50,
-    Visible = false
-}, Main, 8)
-New("UIStroke", {Thickness = 1.2, Color = C.Blue}, ToastBox)
-local ToastDot = New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 12, 0.5, -3), BackgroundColor3 = C.Blue, BorderSizePixel = 0, ZIndex = 51}, ToastBox, 3)
-local ToastLabel = New("TextLabel", {Size = UDim2.new(1, -28, 1, 0), Position = UDim2.new(0, 24, 0, 0), BackgroundTransparency = 1, Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 51}, ToastBox)
-
-local toastThread = nil
-local function ShowToast(msg, color)
-    if toastThread then task.cancel(toastThread) end
-    toastThread = task.spawn(function()
-        local col = color or C.Blue
-        ToastDot.BackgroundColor3 = col
-        ToastBox.UIStroke.Color = col
-        ToastLabel.Text = msg
-        ToastBox.Visible = true
-        Tween(ToastBox, {Position = UDim2.new(0.5, 0, 0, 10)}, 0.3, Enum.EasingStyle.Back)
-        task.wait(2.2)
-        local tw = Tween(ToastBox, {Position = UDim2.new(0.5, 0, 0, -45)}, 0.25, Enum.EasingStyle.Quart)
-        tw.Completed:Connect(function() ToastBox.Visible = false end)
-    end)
-end
-
--- Top Header Bar
+-- Top Draggable Header
 local TopBar = New("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.TBar, BorderSizePixel = 0, ZIndex = 5}, Main)
-New("TextLabel", {Size = UDim2.new(0, 26, 1, 0), Position = UDim2.new(0, 18, 0, 0), BackgroundTransparency = 1, Text = "yb", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Red, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TopBar)
-New("TextLabel", {Size = UDim2.new(0, 60, 1, 0), Position = UDim2.new(0, 46, 0, 0), BackgroundTransparency = 1, Text = "strap", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Blue, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TopBar)
-New("TextLabel", {Size = UDim2.new(0, 80, 1, 0), Position = UDim2.new(0, 94, 0, 1), BackgroundTransparency = 1, Text = "v3.0", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtMuted, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TopBar)
+New("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.Border, BorderSizePixel = 0, ZIndex = 6}, TopBar)
+
+local TitleLogo = New("Frame", {Size = UDim2.new(0, 160, 1, 0), Position = UDim2.new(0, 18, 0, 0), BackgroundTransparency = 1, ZIndex = 6}, TopBar)
+New("TextLabel", {Size = UDim2.new(0, 24, 1, 0), Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1, Text = "yb", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Red, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
+New("TextLabel", {Size = UDim2.new(0, 60, 1, 0), Position = UDim2.new(0, 22, 0, 0), BackgroundTransparency = 1, Text = "strap", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Blue, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
+New("TextLabel", {Size = UDim2.new(0, 60, 1, 0), Position = UDim2.new(0, 68, 0, 0), BackgroundTransparency = 1, Text = "studio", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtMuted, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
 
 local function MakeHeaderBtn(txt, col, xOff)
-    local B = New("TextButton", {Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, xOff, 0.5, -14), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = txt, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = col, ZIndex = 6}, TopBar, 6)
+    local B = New("TextButton", {
+        Size = UDim2.new(0, 28, 0, 28),
+        Position = UDim2.new(1, xOff, 0.5, -14),
+        BackgroundColor3 = C.BtnBg,
+        BorderSizePixel = 0,
+        Text = txt,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = col,
+        ZIndex = 6
+    }, TopBar, 6)
     B.MouseEnter:Connect(function() Tween(B, {BackgroundColor3 = C.BtnHover}, 0.15) end)
     B.MouseLeave:Connect(function() Tween(B, {BackgroundColor3 = C.BtnBg}, 0.15) end)
     return B
 end
 
-local MinBtn = MakeHeaderBtn("—", C.Blue, -68)
-local ClsBtn = MakeHeaderBtn("✕", C.Red, -34)
+local MinBtn = MakeHeaderBtn("—", C.Blue, -70)
+local ClsBtn = MakeHeaderBtn("✕", C.Red, -36)
 
--- Sub-Header: Search & Tabs
-local SubHeader = New("Frame", {Size = UDim2.new(1, -36, 0, 32), Position = UDim2.new(0, 18, 0, 52), BackgroundTransparency = 1, ZIndex = 5}, Main)
+-- Navigation Tabs
+local TabBar = New("Frame", {Size = UDim2.new(1, -40, 0, 30), Position = UDim2.new(0, 20, 0, 52), BackgroundTransparency = 1, ZIndex = 5}, Main)
+local TabActiveBtn = New("TextButton", {Size = UDim2.new(0, 120, 1, 0), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Active Flags", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 6}, TabBar, 6)
+local TabSavedBtn = New("TextButton", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(0, 126, 0, 0), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Named Configs", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtGray, ZIndex = 6}, TabBar, 6)
 
-local TabActiveBtn = New("TextButton", {Size = UDim2.new(0, 120, 1, 0), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Active Flags", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 6}, SubHeader, 6)
-local TabSavedBtn = New("TextButton", {Size = UDim2.new(0, 120, 1, 0), Position = UDim2.new(0, 126, 0, 0), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Named Configs", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtGray, ZIndex = 6}, SubHeader, 6)
-
-local SearchBox = New("TextBox", {
-    Size = UDim2.new(1, -260, 1, 0),
-    Position = UDim2.new(0, 260, 0, 0),
-    BackgroundColor3 = C.CardBg,
-    PlaceholderText = "Search active flags / configs...",
-    Text = "",
-    Font = Enum.Font.GothamMedium,
-    TextSize = 11,
-    TextColor3 = C.TxtDark,
-    PlaceholderColor3 = C.TxtMuted,
-    BorderSizePixel = 0,
-    ZIndex = 6
-}, SubHeader, 6)
-New("UIStroke", {Thickness = 1, Color = C.Border}, SearchBox)
-
--- Content Scroll Containers
-local ActiveContainer = New("Frame", {Size = UDim2.new(1, -36, 1, -150), Position = UDim2.new(0, 18, 0, 92), BackgroundTransparency = 1, ZIndex = 5}, Main)
-local SavedContainer = New("Frame", {Size = UDim2.new(1, -36, 1, -150), Position = UDim2.new(0, 18, 0, 92), BackgroundTransparency = 1, Visible = false, ZIndex = 5}, Main)
+-- Main Lists Containers
+local ActiveContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -170), Position = UDim2.new(0, 20, 0, 88), BackgroundTransparency = 1, ZIndex = 5}, Main)
+local SavedContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -170), Position = UDim2.new(0, 20, 0, 88), BackgroundTransparency = 1, Visible = false, ZIndex = 5}, Main)
 
 local FlagScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollBarImageColor3 = C.Border, ZIndex = 5}, ActiveContainer, 8)
-New("UIStroke", {Thickness = 1, Color = C.Border}, FlagScroll)
 local FLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, FlagScroll)
 New("UIPadding", {PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, FlagScroll)
 
 local ConfigScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollBarImageColor3 = C.Border, ZIndex = 5}, SavedContainer, 8)
-New("UIStroke", {Thickness = 1, Color = C.Border}, ConfigScroll)
 local CLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, ConfigScroll)
 New("UIPadding", {PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, ConfigScroll)
 
--- Live Lists Synchronization
-local currentSearchQuery = ""
+-- Global Toast Notification Engine
+local function ShowToast(msg, col)
+    local toast = New("Frame", {
+        Size = UDim2.new(0, 280, 0, 36),
+        Position = UDim2.new(0.5, 0, 1, 20),
+        AnchorPoint = Vector2.new(0.5, 1),
+        BackgroundColor3 = C.TBar,
+        BorderSizePixel = 0,
+        ZIndex = 80
+    }, Main, 8)
+    New("UIStroke", {Thickness = 1.4, Color = col or C.Blue}, toast)
+    New("TextLabel", {
+        Size = UDim2.new(1, -16, 1, 0),
+        Position = UDim2.new(0, 8, 0, 0),
+        BackgroundTransparency = 1,
+        Text = msg,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        TextColor3 = C.TxtWhite,
+        ZIndex = 81
+    }, toast)
+
+    Tween(toast, {Position = UDim2.new(0.5, 0, 1, -16)}, 0.25, Enum.EasingStyle.Quart)
+    task.delay(1.75, function()
+        local tw = Tween(toast, {Position = UDim2.new(0.5, 0, 1, 40)}, 0.25, Enum.EasingStyle.Quart)
+        tw.Completed:Connect(function() pcall(function() toast:Destroy() end) end)
+    end)
+end
+
+-- Refresh UI Lists
 local function RefreshLists()
     for _, x in ipairs(FlagScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
     for _, x in ipairs(ConfigScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
 
     local cnt = SafeReadFile(F_PATH)
     local dec = AutoRepairJSON(cnt)
-    local activeCount = 0
-    local filter = currentSearchQuery:lower():gsub(" ", "")
+    local flagCount = 0
 
     if type(dec) == "table" then
         for k, v in pairs(dec) do
             if not IsHiddenFlag(k) then
-                activeCount = activeCount + 1
-                if filter == "" or k:lower():find(filter, 1, true) then
-                    local isVerified = VerifyFlagStatus(k)
-                    local R = New("Frame", {Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, FlagScroll, 6)
-                    
-                    -- Status Indicator Dot
-                    New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = isVerified and C.Green or C.Red, BorderSizePixel = 0, ZIndex = 7}, R, 3)
-                    
-                    -- Flag Name (Safely Truncated)
-                    New("TextLabel", {
-                        Size = UDim2.new(1, -215, 1, 0),
-                        Position = UDim2.new(0, 22, 0, 0),
-                        BackgroundTransparency = 1,
-                        Text = k,
-                        Font = Enum.Font.Code,
-                        TextSize = 11,
-                        TextColor3 = C.TxtDark,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        ClipsDescendants = true,
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                        ZIndex = 7
-                    }, R)
+                flagCount = flagCount + 1
+                local row = New("Frame", {Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, FlagScroll, 6)
+                local statusDot = New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red, BorderSizePixel = 0, ZIndex = 7}, row, 3)
 
-                    -- Inline Right Control Dock (Value, SET, DEL)
-                    local dock = New("Frame", {Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(1, -192, 0, 0), BackgroundTransparency = 1, ZIndex = 8}, R)
-                    local valBox = New("TextBox", {Size = UDim2.new(0, 72, 0, 22), Position = UDim2.new(0, 0, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 9}, dock, 4)
-                    New("UIStroke", {Thickness = 1, Color = C.Border}, valBox)
+                -- Flag Label with strict clipping & ellipsis truncation
+                local textStr = k .. " = " .. tostring(v)
+                local flagLabel = New("TextLabel", {
+                    Size = UDim2.new(1, -170, 1, 0),
+                    Position = UDim2.new(0, 24, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = textStr,
+                    Font = Enum.Font.Code,
+                    TextSize = 11,
+                    TextColor3 = C.TxtDark,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ClipsDescendants = true,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    ZIndex = 7
+                }, row)
 
-                    local setBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 77, 0.5, -11), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 9}, dock, 4)
-                    local delBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 134, 0.5, -11), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 9}, dock, 4)
+                -- High Contrast SET & DEL Buttons
+                local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
+                local setBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
 
-                    local function ApplyVal()
-                        local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
-                        local parsedVal = tonumber(newText)
-                        if parsedVal == nil then
-                            if newText:lower() == "true" then parsedVal = true
-                            elseif newText:lower() == "false" then parsedVal = false
-                            else parsedVal = newText end
-                        end
-                        dec[k] = parsedVal
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                        TrySetFlag(k, parsedVal)
-                        return parsedVal
-                    end
+                setBtn.MouseEnter:Connect(function() Tween(setBtn, {BackgroundColor3 = C.DarkGreen}, 0.15) end)
+                setBtn.MouseLeave:Connect(function() Tween(setBtn, {BackgroundColor3 = C.Green}, 0.15) end)
+                delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
+                delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
 
-                    valBox.FocusLost:Connect(function() ApplyVal() RefreshLists() end)
-                    setBtn.MouseButton1Click:Connect(function()
-                        local finalVal = ApplyVal()
-                        setBtn.Text = "OK!"
-                        ShowToast("Set " .. k .. " = " .. tostring(finalVal), C.Green)
-                        task.delay(0.9, function() pcall(function() setBtn.Text = "SET" end) end)
-                        RefreshLists()
+                setBtn.MouseButton1Click:Connect(function()
+                    TrySetFlag(k, v)
+                    setBtn.Text = "OK!"
+                    setBtn.BackgroundColor3 = C.DarkGreen
+                    ShowToast("Applied " .. k, C.Green)
+                    task.delay(0.9, function()
+                        pcall(function()
+                            setBtn.Text = "SET"
+                            setBtn.BackgroundColor3 = C.Green
+                            statusDot.BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red
+                        end)
                     end)
+                end)
 
-                    delBtn.MouseButton1Click:Connect(function()
-                        dec[k] = nil
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                        R:Destroy()
-                        ShowToast("Deleted " .. k, C.Red)
-                        RefreshLists()
-                    end)
-                end
+                delBtn.MouseButton1Click:Connect(function()
+                    dec[k] = nil
+                    SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
+                    row:Destroy()
+                    ShowToast("Deleted " .. k, C.Red)
+                    RefreshLists()
+                end)
             end
         end
     end
-    TabActiveBtn.Text = "Active Flags (" .. tostring(activeCount) .. ")"
+    TabActiveBtn.Text = "Active Flags (" .. tostring(flagCount) .. ")"
 
-    -- Merge configs from disk and memory table
-    local mergedConfigs = {}
-    if type(_G.ShystxSavedConfigs) == "table" then
-        for k, v in pairs(_G.ShystxSavedConfigs) do mergedConfigs[k] = v end
-    end
+    -- Render Saved Named Configs
     local cfgCnt = SafeReadFile(CONFIGS_PATH)
-    local ok, diskConfigs = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
-    if ok and type(diskConfigs) == "table" then
-        for k, v in pairs(diskConfigs) do mergedConfigs[k] = v end
+    local ok, savedConfigs = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
+    if (not ok or type(savedConfigs) ~= "table") and _G.ShystxSavedConfigs then
+        savedConfigs = _G.ShystxSavedConfigs
     end
 
-    local configCount = 0
-    for cfgName, flagsObj in pairs(mergedConfigs) do
-        if type(flagsObj) == "table" then
-            configCount = configCount + 1
-            if filter == "" or cfgName:lower():find(filter, 1, true) then
-                local flagNum = 0
-                for fKey in pairs(flagsObj) do
-                    if not IsHiddenFlag(fKey) then flagNum = flagNum + 1 end
+    local cfgTotal = 0
+    if type(savedConfigs) == "table" then
+        for cfgName, flagsObj in pairs(savedConfigs) do
+            if type(flagsObj) == "table" then
+                cfgTotal = cfgTotal + 1
+                local count = 0
+                for fName in pairs(flagsObj) do
+                    if not IsHiddenFlag(fName) then count = count + 1 end
                 end
 
-                local R = New("Frame", {Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, ConfigScroll, 6)
-                New("TextLabel", {Size = UDim2.new(1, -210, 1, 0), Position = UDim2.new(0, 12, 0, 0), BackgroundTransparency = 1, Text = cfgName .. " (" .. tostring(flagNum) .. " flags)", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7}, R)
+                local row = New("Frame", {Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, ConfigScroll, 6)
+                New("TextLabel", {
+                    Size = UDim2.new(1, -170, 1, 0),
+                    Position = UDim2.new(0, 14, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = cfgName .. " (" .. tostring(count) .. " flags)",
+                    Font = Enum.Font.GothamBold,
+                    TextSize = 11,
+                    TextColor3 = C.TxtDark,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ClipsDescendants = true,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    ZIndex = 7
+                }, row)
 
-                local LoadBtn = New("TextButton", {Size = UDim2.new(0, 56, 0, 24), Position = UDim2.new(1, -180, 0.5, -12), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 7}, R, 4)
-                local CopyBtn = New("TextButton", {Size = UDim2.new(0, 56, 0, 24), Position = UDim2.new(1, -120, 0.5, -12), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Copy", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.TxtDark, ZIndex = 7}, R, 4)
-                local DelBtn = New("TextButton", {Size = UDim2.new(0, 56, 0, 24), Position = UDim2.new(1, -60, 0.5, -12), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Delete", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.Red, ZIndex = 7}, R, 4)
+                local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
+                local loadBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
 
-                LoadBtn.MouseButton1Click:Connect(function()
+                loadBtn.MouseEnter:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.DarkBlue}, 0.15) end)
+                loadBtn.MouseLeave:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.Blue}, 0.15) end)
+                delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
+                delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
+
+                loadBtn.MouseButton1Click:Connect(function()
                     SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
-                    for fName, val in pairs(flagsObj) do TrySetFlag(fName, val) end
-                    ShowToast("Loaded config '" .. cfgName .. "' (" .. tostring(flagNum) .. " flags)", C.Green)
+                    ShowToast("Loaded config: " .. cfgName, C.Blue)
                     RefreshLists()
                 end)
 
-                CopyBtn.MouseButton1Click:Connect(function()
-                    if type(setclipboard) == "function" then
-                        pcall(function() setclipboard(HttpService:JSONEncode(flagsObj)) end)
-                        ShowToast("Copied '" .. cfgName .. "' JSON to clipboard", C.Blue)
-                    end
-                end)
-
-                DelBtn.MouseButton1Click:Connect(function()
-                    mergedConfigs[cfgName] = nil
+                delBtn.MouseButton1Click:Connect(function()
+                    savedConfigs[cfgName] = nil
                     _G.ShystxSavedConfigs[cfgName] = nil
-                    SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(mergedConfigs))
-                    ShowToast("Deleted config '" .. cfgName .. "'", C.Red)
-                    R:Destroy()
+                    SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
+                    row:Destroy()
+                    ShowToast("Deleted config: " .. cfgName, C.Red)
                     RefreshLists()
                 end)
             end
         end
     end
-    TabSavedBtn.Text = "Named Configs (" .. tostring(configCount) .. ")"
+    TabSavedBtn.Text = "Named Configs (" .. tostring(cfgTotal) .. ")"
 
     FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 12)
     ConfigScroll.CanvasSize = UDim2.new(0, 0, 0, CLayout.AbsoluteContentSize.Y + 12)
@@ -762,11 +955,8 @@ end
 
 FLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 12) end)
 CLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() ConfigScroll.CanvasSize = UDim2.new(0, 0, 0, CLayout.AbsoluteContentSize.Y + 12) end)
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-    currentSearchQuery = SearchBox.Text
-    RefreshLists()
-end)
 
+-- Tab Switch Events
 TabActiveBtn.MouseButton1Click:Connect(function()
     Tween(TabActiveBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
     Tween(TabSavedBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
@@ -781,9 +971,9 @@ TabSavedBtn.MouseButton1Click:Connect(function()
     RefreshLists()
 end)
 
--- Bottom Action Dock
-local BotBar = New("Frame", {Size = UDim2.new(1, -36, 0, 36), Position = UDim2.new(0, 18, 1, -46), BackgroundTransparency = 1, ZIndex = 5}, Main)
-New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6)}, BotBar)
+-- Bottom Navigation Actions Bar
+local BotBar = New("Frame", {Size = UDim2.new(1, -40, 0, 36), Position = UDim2.new(0, 20, 1, -48), BackgroundTransparency = 1, ZIndex = 5}, Main)
+local BL = New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6)}, BotBar)
 
 local function MakeActionBtn(txt, w, col, txtCol)
     local B = New("TextButton", {
@@ -826,15 +1016,17 @@ end
 
 -- Save Config Modal (Rock-Solid Multi-Tier Storage)
 local SaveConfigPanel = MakeModal(390, 150)
-New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 14), BackgroundTransparency = 1, Text = "Save Active Flags to Named Config", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, SaveConfigPanel)
-local ConfigNameBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 34), Position = UDim2.new(0, 16, 0, 46), BackgroundColor3 = C.CardBg, PlaceholderText = "Enter config name (e.g. Performance, HighFPS)...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, ZIndex = 21}, SaveConfigPanel, 6)
+New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 12), BackgroundTransparency = 1, Text = "Save Active Flags as Config", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, SaveConfigPanel)
+local ConfigNameBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 34), Position = UDim2.new(0, 16, 0, 44), BackgroundColor3 = C.CardBg, PlaceholderText = "Enter config preset name...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, ZIndex = 21}, SaveConfigPanel, 6)
 New("UIStroke", {Thickness = 1, Color = C.Border}, ConfigNameBox)
-local CfgCancelBtn = New("TextButton", {Size = UDim2.new(0, 80, 0, 30), Position = UDim2.new(1, -182, 1, -42), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, SaveConfigPanel, 6)
-local CfgSaveBtn = New("TextButton", {Size = UDim2.new(0, 90, 0, 30), Position = UDim2.new(1, -96, 1, -42), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "Save Config", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, SaveConfigPanel, 6)
+
+local CfgCancelBtn = New("TextButton", {Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -182, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, SaveConfigPanel, 6)
+local CfgSaveBtn = New("TextButton", {Size = UDim2.new(0, 92, 0, 28), Position = UDim2.new(1, -96, 1, -38), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "Save Preset", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, SaveConfigPanel, 6)
 
 SaveConfigBtn.MouseButton1Click:Connect(function()
-    SaveConfigPanel.Visible = true
+    EditPanel.Visible, ImportPanel.Visible = false, false
     ConfigNameBox.Text = ""
+    SaveConfigPanel.Visible = true
     ConfigNameBox:CaptureFocus()
 end)
 CfgCancelBtn.MouseButton1Click:Connect(function() SaveConfigPanel.Visible = false end)
@@ -1019,6 +1211,11 @@ end)
 
 ClearBtn.MouseButton1Click:Connect(function()
     SafeWriteFile(F_PATH, "{}")
+    _G.ShystxFlagsApplied = false
+    _G.ShystxBoostEnabled = false
+    isArmed = false
+    table.clear(shiftTaps)
+    table.clear(l3Taps)
     ShowToast("Active flags cleared", C.Red)
     RefreshLists()
 end)
@@ -1032,8 +1229,12 @@ InjectBtn.MouseButton1Click:Connect(function()
             if not IsHiddenFlag(k) then count = count + 1 end
         end
     end
+    TrySetFlag("SimDefaultFluidForceEnabled", true)
+    TrySetFlag("FIntSimDefaultFluidForceEnabled", 1)
     SafeWriteFile(F_PATH, HttpService:JSONEncode(decoded))
-    ShowToast("Injected " .. tostring(count) .. " FastFlags into engine", C.Green)
+    _G.ShystxFlagsApplied = true
+    _G.ShystxBoostEnabled = true
+    ShowToast("Applied " .. tostring(count) .. " FastFlags into engine", C.Green)
     RefreshLists()
 end)
 
