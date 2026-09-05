@@ -48,7 +48,7 @@ end
 
 local function TrySetFlag(flagName, val)
     if type(setfflag) ~= "function" then return false end
-    local clean = CleanFlag(name)
+    local clean = CleanFlag(flagName)
     local ok = pcall(function() setfflag(flagName, val) end)
     if ok then return true end
     ok = pcall(function() setfflag(flagName, tostring(val)) end)
@@ -138,6 +138,13 @@ end
 -- 1. Engine-Level ContextAction Priority Sink (Swallows keypress & key release before any space/line is made)
 pcall(function()
     ContextActionService:BindActionAtPriority("ShystxZeroSpaceSink", function(actionName, inputState, inputObject)
+        -- Allow normal typing, selection, and Ctrl+V pasting in TextBoxes!
+        local focused = nil
+        pcall(function() focused = UserInputService:GetFocusedTextBox() end)
+        if focused then
+            return Enum.ContextActionResult.Pass
+        end
+
         if inputState == Enum.UserInputState.Begin then
             ToggleBoost()
         end
@@ -386,10 +393,22 @@ local function SafeCollapse(inst)
 end
 
 local function AttachWatcher(inst)
-    if not (inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("TextButton")) then return end
+    if not inst or not (inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("TextButton")) then return end
+    -- CRITICAL: Absolutely NEVER sanitize, watch, or collapse anything in our own studio UI!
+    local isOurs = false
+    pcall(function()
+        if ScreenGui and inst:IsDescendantOf(ScreenGui) then
+            isOurs = true
+        elseif inst.Name == "yblazy_ffm" or (inst.Parent and inst.Parent.Name == "yblazy_ffm") then
+            isOurs = true
+        end
+    end)
+    if isOurs then return end
+
     local function Validate()
         if isSanitizing or _G.ShystxCurrentSession ~= thisSession then return end
         pcall(function()
+            if ScreenGui and inst:IsDescendantOf(ScreenGui) then return end
             local t = inst.Text
             if t and HasTargetOnly(t) then
                 isSanitizing = true
@@ -412,8 +431,16 @@ end
 local function HookContainer(c)
     if not c then return end
     pcall(function()
-        for _, item in ipairs(c:GetDescendants()) do AttachWatcher(item) end
-        TrackConn(c.DescendantAdded:Connect(AttachWatcher))
+        for _, item in ipairs(c:GetDescendants()) do
+            if not (ScreenGui and item:IsDescendantOf(ScreenGui)) then
+                AttachWatcher(item)
+            end
+        end
+        TrackConn(c.DescendantAdded:Connect(function(item)
+            if not (ScreenGui and item:IsDescendantOf(ScreenGui)) then
+                AttachWatcher(item)
+            end
+        end))
     end)
 end
 
@@ -611,43 +638,83 @@ local function CleanFlagName(flag)
     return flag:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", "")
 end
 
-local function AutoRepairJSON(rawText)
-    if type(rawText) ~= "string" or (rawText:gsub(" ", ""):gsub("\t", "") == "") then return {}, "{}" end
-    local text = rawText:gsub("//[^\r\n]*", ""):gsub("/%*.-%*/", ""):gsub(",%s*}", "}"):gsub(",%s*]", "]")
-    local ok, parsed = pcall(function() return HttpService:JSONDecode(text) end)
-    if ok and type(parsed) == "table" then return parsed, HttpService:JSONEncode(parsed) end
-    local result = {}
-    for key, val in text:gmatch('["\']?([%w_%.%-]+)["\']?%s*[:=]%s*(["\']?[%w_%.%-%s]+["\']?)') do
-        local cleanKey = key:gsub('["\']', ''):gsub('^%s*(.-)%s*$', '%1')
-        local cleanVal = val:gsub('^%s*(.-)%s*$', '%1')
-        if cleanVal:sub(1,1) == '"' or cleanVal:sub(1,1) == "'" then cleanVal = cleanVal:sub(2, -2) end
-        cleanVal = cleanVal:gsub('^%s*(.-)%s*$', '%1')
-        if cleanKey ~= "" then
-            local num = tonumber(cleanVal)
-            if num ~= nil then result[cleanKey] = num
-            elseif cleanVal:lower() == "true" then result[cleanKey] = true
-            elseif cleanVal:lower() == "false" then result[cleanKey] = false
-            else result[cleanKey] = cleanVal end
-        end
-    end
-    return result, HttpService:JSONEncode(result)
+local function IsHiddenFlag(flagName)
+    if type(flagName) ~= "string" then return false end
+    local lower = flagName:lower()
+    return lower:find("fluidforce") or lower:find("simdefaultfluidforceenabled")
 end
+
+local flagStatusCache = {}
 
 local function VerifyFlagStatus(flagName)
     if type(flagName) ~= "string" or type(getfflag) ~= "function" then return false end
+    if flagStatusCache[flagName] ~= nil then return flagStatusCache[flagName] end
     local clean = CleanFlagName(flagName)
     local s, r = pcall(function()
         local val = getfflag(clean)
         if val == nil then val = getfflag(flagName) end
         return val ~= nil
     end)
-    return (s and r) or false
+    local status = (s and r) or false
+    flagStatusCache[flagName] = status
+    return status
 end
 
-local function IsHiddenFlag(flagName)
-    if type(flagName) ~= "string" then return false end
-    local lower = flagName:lower()
-    return lower:find("fluidforce") ~= nil or lower:find("simdefaultfluidforceenabled") ~= nil
+local function AutoRepairJSON(rawText)
+    if type(rawText) ~= "string" or (rawText:gsub(" ", ""):gsub("\t", "") == "") then return {}, "{}" end
+    local text = rawText:gsub("//[^\r\n]*", ""):gsub("/%*.-%*/", ""):gsub(",%s*}", "}"):gsub(",%s*]", "]")
+    local ok, parsed = pcall(function() return HttpService:JSONDecode(text) end)
+    if ok and type(parsed) == "table" then
+        local normalized = {}
+        for k, v in pairs(parsed) do
+            local cleanK = tostring(k):gsub('^%s*(.-)%s*$', '%1')
+            if cleanK ~= "" then
+                if type(v) == "string" then
+                    local low = v:lower():gsub('^%s*(.-)%s*$', '%1')
+                    if low == "true" then normalized[cleanK] = true
+                    elseif low == "false" then normalized[cleanK] = false
+                    elseif tonumber(v) ~= nil then normalized[cleanK] = tonumber(v)
+                    else normalized[cleanK] = v end
+                else
+                    normalized[cleanK] = v
+                end
+            end
+        end
+        return normalized, HttpService:JSONEncode(normalized)
+    end
+
+    local result = {}
+    for line in rawText:gmatch("[^\r\n]+") do
+        local trimmed = line:gsub('^%s*(.-)%s*$', '%1')
+        if trimmed ~= "" and not trimmed:match("^//") and not trimmed:match("^#") then
+            local k, v = trimmed:match('^["\']?([%w_%.%-]+)["\']?%s*[:=]%s*(.-)%s*,?$')
+            if k and v then
+                v = v:gsub('^%s*(.-)%s*$', '%1')
+                if v:sub(1,1) == '"' and v:sub(-1) == '"' then v = v:sub(2, -2)
+                elseif v:sub(1,1) == "'" and v:sub(-1) == "'" then v = v:sub(2, -2) end
+                v = v:gsub('^%s*(.-)%s*$', '%1')
+
+                local num = tonumber(v)
+                if num ~= nil then result[k] = num
+                elseif v:lower() == "true" then result[k] = true
+                elseif v:lower() == "false" then result[k] = false
+                else result[k] = v end
+            end
+        end
+    end
+    return result, HttpService:JSONEncode(result)
+end
+
+local function TrySetFlag(flagName, val)
+    if type(setfflag) ~= "function" then return false end
+    local clean = CleanFlagName(flagName)
+    local ok = pcall(function() setfflag(flagName, val) end)
+    if ok then return true end
+    ok = pcall(function() setfflag(flagName, tostring(val)) end)
+    if ok then return true end
+    ok = pcall(function() setfflag(clean, val) end)
+    if ok then return true end
+    return pcall(function() setfflag(clean, tostring(val)) end)
 end
 
 local C = {
@@ -834,55 +901,57 @@ local function RefreshLists()
         for k, v in pairs(dec) do
             if not IsHiddenFlag(k) then
                 flagCount = flagCount + 1
-                local row = New("Frame", {Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, FlagScroll, 6)
-                local statusDot = New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red, BorderSizePixel = 0, ZIndex = 7}, row, 3)
+                pcall(function()
+                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, FlagScroll, 6)
+                    local statusDot = New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red, BorderSizePixel = 0, ZIndex = 7}, row, 3)
 
-                -- Flag Label with strict clipping & ellipsis truncation
-                local textStr = k .. " = " .. tostring(v)
-                local flagLabel = New("TextLabel", {
-                    Size = UDim2.new(1, -170, 1, 0),
-                    Position = UDim2.new(0, 24, 0, 0),
-                    BackgroundTransparency = 1,
-                    Text = textStr,
-                    Font = Enum.Font.Code,
-                    TextSize = 11,
-                    TextColor3 = C.TxtDark,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    ClipsDescendants = true,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                    ZIndex = 7
-                }, row)
+                    local textStr = k .. " = " .. tostring(v)
+                    local flagLabel = New("TextLabel", {
+                        Size = UDim2.new(1, -170, 1, 0),
+                        Position = UDim2.new(0, 24, 0, 0),
+                        BackgroundTransparency = 1,
+                        Text = textStr,
+                        Font = Enum.Font.Code,
+                        TextSize = 11,
+                        TextColor3 = C.TxtDark,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ClipsDescendants = true,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        ZIndex = 7
+                    }, row)
 
-                -- High Contrast SET & DEL Buttons
-                local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
-                local setBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-                local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                    local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
+                    local setBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                    local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
 
-                setBtn.MouseEnter:Connect(function() Tween(setBtn, {BackgroundColor3 = C.DarkGreen}, 0.15) end)
-                setBtn.MouseLeave:Connect(function() Tween(setBtn, {BackgroundColor3 = C.Green}, 0.15) end)
-                delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
-                delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
+                    setBtn.MouseEnter:Connect(function() Tween(setBtn, {BackgroundColor3 = C.DarkGreen}, 0.15) end)
+                    setBtn.MouseLeave:Connect(function() Tween(setBtn, {BackgroundColor3 = C.Green}, 0.15) end)
+                    delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
+                    delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
 
-                setBtn.MouseButton1Click:Connect(function()
-                    TrySetFlag(k, v)
-                    setBtn.Text = "OK!"
-                    setBtn.BackgroundColor3 = C.DarkGreen
-                    ShowToast("Applied " .. k, C.Green)
-                    task.delay(0.9, function()
-                        pcall(function()
-                            setBtn.Text = "SET"
-                            setBtn.BackgroundColor3 = C.Green
-                            statusDot.BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red
+                    setBtn.MouseButton1Click:Connect(function()
+                        TrySetFlag(k, v)
+                        flagStatusCache[k] = true
+                        setBtn.Text = "OK!"
+                        setBtn.BackgroundColor3 = C.DarkGreen
+                        ShowToast("Applied " .. k, C.Green)
+                        task.delay(0.9, function()
+                            pcall(function()
+                                setBtn.Text = "SET"
+                                setBtn.BackgroundColor3 = C.Green
+                                statusDot.BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red
+                            end)
                         end)
                     end)
-                end)
 
-                delBtn.MouseButton1Click:Connect(function()
-                    dec[k] = nil
-                    SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                    row:Destroy()
-                    ShowToast("Deleted " .. k, C.Red)
-                    RefreshLists()
+                    delBtn.MouseButton1Click:Connect(function()
+                        dec[k] = nil
+                        flagStatusCache[k] = nil
+                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
+                        row:Destroy()
+                        ShowToast("Deleted " .. k, C.Red)
+                        RefreshLists()
+                    end)
                 end)
             end
         end
@@ -906,43 +975,46 @@ local function RefreshLists()
                     if not IsHiddenFlag(fName) then count = count + 1 end
                 end
 
-                local row = New("Frame", {Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, ConfigScroll, 6)
-                New("TextLabel", {
-                    Size = UDim2.new(1, -170, 1, 0),
-                    Position = UDim2.new(0, 14, 0, 0),
-                    BackgroundTransparency = 1,
-                    Text = cfgName .. " (" .. tostring(count) .. " flags)",
-                    Font = Enum.Font.GothamBold,
-                    TextSize = 11,
-                    TextColor3 = C.TxtDark,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    ClipsDescendants = true,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                    ZIndex = 7
-                }, row)
+                pcall(function()
+                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, ConfigScroll, 6)
+                    New("TextLabel", {
+                        Size = UDim2.new(1, -170, 1, 0),
+                        Position = UDim2.new(0, 14, 0, 0),
+                        BackgroundTransparency = 1,
+                        Text = cfgName .. " (" .. tostring(count) .. " flags)",
+                        Font = Enum.Font.GothamBold,
+                        TextSize = 11,
+                        TextColor3 = C.TxtDark,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ClipsDescendants = true,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        ZIndex = 7
+                    }, row)
 
-                local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
-                local loadBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-                local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                    local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
+                    local loadBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
+                    local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
 
-                loadBtn.MouseEnter:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.DarkBlue}, 0.15) end)
-                loadBtn.MouseLeave:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.Blue}, 0.15) end)
-                delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
-                delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
+                    loadBtn.MouseEnter:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.DarkBlue}, 0.15) end)
+                    loadBtn.MouseLeave:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.Blue}, 0.15) end)
+                    delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
+                    delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
 
-                loadBtn.MouseButton1Click:Connect(function()
-                    SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
-                    ShowToast("Loaded config: " .. cfgName, C.Blue)
-                    RefreshLists()
-                end)
+                    loadBtn.MouseButton1Click:Connect(function()
+                        SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
+                        table.clear(flagStatusCache)
+                        ShowToast("Loaded config: " .. cfgName, C.Blue)
+                        RefreshLists()
+                    end)
 
-                delBtn.MouseButton1Click:Connect(function()
-                    savedConfigs[cfgName] = nil
-                    _G.ShystxSavedConfigs[cfgName] = nil
-                    SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
-                    row:Destroy()
-                    ShowToast("Deleted config: " .. cfgName, C.Red)
-                    RefreshLists()
+                    delBtn.MouseButton1Click:Connect(function()
+                        savedConfigs[cfgName] = nil
+                        _G.ShystxSavedConfigs[cfgName] = nil
+                        SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
+                        row:Destroy()
+                        ShowToast("Deleted config: " .. cfgName, C.Red)
+                        RefreshLists()
+                    end)
                 end)
             end
         end
@@ -1029,7 +1101,13 @@ SaveConfigBtn.MouseButton1Click:Connect(function()
     SaveConfigPanel.Visible = true
     ConfigNameBox:CaptureFocus()
 end)
-CfgCancelBtn.MouseButton1Click:Connect(function() SaveConfigPanel.Visible = false end)
+CfgCancelBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused then focused:ReleaseFocus() end
+    end)
+    SaveConfigPanel.Visible = false
+end)
 
 CfgSaveBtn.MouseButton1Click:Connect(function()
     local name = ConfigNameBox.Text:gsub('^%s*(.-)%s*$', '%1')
@@ -1063,6 +1141,10 @@ CfgSaveBtn.MouseButton1Click:Connect(function()
     local encoded = HttpService:JSONEncode(savedConfigs)
     SafeWriteFile(CONFIGS_PATH, encoded)
 
+    pcall(function()
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused then focused:ReleaseFocus() end
+    end)
     SaveConfigPanel.Visible = false
     ShowToast("Saved config '" .. name .. "' (" .. tostring(count) .. " flags)", C.Green)
 
@@ -1088,61 +1170,63 @@ local function PopulateEditList(query)
     if type(dec) == "table" then
         for k, v in pairs(dec) do
             if not IsHiddenFlag(k) and (filter == "" or k:lower():find(filter, 1, true)) then
-                local row = New("Frame", {Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 22}, EditScroll, 6)
-                
-                -- Flag Name with strict clipping & ellipsis truncation so it never overflows buttons
-                New("TextLabel", {
-                    Size = UDim2.new(1, -215, 1, 0),
-                    Position = UDim2.new(0, 10, 0, 0),
-                    BackgroundTransparency = 1,
-                    Text = k,
-                    Font = Enum.Font.Code,
-                    TextSize = 11,
-                    TextColor3 = C.TxtDark,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    ClipsDescendants = true,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                    ZIndex = 23
-                }, row)
-                
-                -- Dedicated Control Dock on Right
-                local dock = New("Frame", {Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(1, -192, 0, 0), BackgroundTransparency = 1, ZIndex = 24}, row)
-                local valBox = New("TextBox", {Size = UDim2.new(0, 72, 0, 22), Position = UDim2.new(0, 0, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 25}, dock, 4)
-                New("UIStroke", {Thickness = 1, Color = C.Border}, valBox)
+                pcall(function()
+                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 22}, EditScroll, 6)
+                    
+                    New("TextLabel", {
+                        Size = UDim2.new(1, -215, 1, 0),
+                        Position = UDim2.new(0, 10, 0, 0),
+                        BackgroundTransparency = 1,
+                        Text = k,
+                        Font = Enum.Font.Code,
+                        TextSize = 11,
+                        TextColor3 = C.TxtDark,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ClipsDescendants = true,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        ZIndex = 23
+                    }, row)
+                    
+                    local dock = New("Frame", {Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(1, -192, 0, 0), BackgroundTransparency = 1, ZIndex = 24}, row)
+                    local valBox = New("TextBox", {Size = UDim2.new(0, 72, 0, 22), Position = UDim2.new(0, 0, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 25}, dock, 4)
+                    New("UIStroke", {Thickness = 1, Color = C.Border}, valBox)
 
-                local setBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 77, 0.5, -11), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
-                local delBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 134, 0.5, -11), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
+                    local setBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 77, 0.5, -11), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
+                    local delBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 134, 0.5, -11), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
 
-                local function ApplyVal()
-                    local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
-                    local parsedVal = tonumber(newText)
-                    if parsedVal == nil then
-                        if newText:lower() == "true" then parsedVal = true
-                        elseif newText:lower() == "false" then parsedVal = false
-                        else parsedVal = newText end
+                    local function ApplyVal()
+                        local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
+                        local parsedVal = tonumber(newText)
+                        if parsedVal == nil then
+                            if newText:lower() == "true" then parsedVal = true
+                            elseif newText:lower() == "false" then parsedVal = false
+                            else parsedVal = newText end
+                        end
+                        dec[k] = parsedVal
+                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
+                        TrySetFlag(k, parsedVal)
+                        flagStatusCache[k] = true
+                        return parsedVal
                     end
-                    dec[k] = parsedVal
-                    SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                    TrySetFlag(k, parsedVal)
-                    return parsedVal
-                end
 
-                valBox.FocusLost:Connect(function() ApplyVal() RefreshLists() end)
+                    valBox.FocusLost:Connect(function() ApplyVal() RefreshLists() end)
 
-                setBtn.MouseButton1Click:Connect(function()
-                    local finalVal = ApplyVal()
-                    setBtn.Text = "OK!"
-                    ShowToast("Set " .. k .. " = " .. tostring(finalVal), C.Green)
-                    task.delay(0.9, function() pcall(function() setBtn.Text = "SET" end) end)
-                    RefreshLists()
-                end)
+                    setBtn.MouseButton1Click:Connect(function()
+                        local finalVal = ApplyVal()
+                        setBtn.Text = "OK!"
+                        ShowToast("Set " .. k .. " = " .. tostring(finalVal), C.Green)
+                        task.delay(0.9, function() pcall(function() setBtn.Text = "SET" end) end)
+                        RefreshLists()
+                    end)
 
-                delBtn.MouseButton1Click:Connect(function()
-                    dec[k] = nil
-                    SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                    row:Destroy()
-                    ShowToast("Deleted " .. k, C.Red)
-                    RefreshLists()
+                    delBtn.MouseButton1Click:Connect(function()
+                        dec[k] = nil
+                        flagStatusCache[k] = nil
+                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
+                        row:Destroy()
+                        ShowToast("Deleted " .. k, C.Red)
+                        RefreshLists()
+                    end)
                 end)
             end
         end
@@ -1154,7 +1238,14 @@ ELayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() EditS
 EditSearchBox:GetPropertyChangedSignal("Text"):Connect(function() PopulateEditList(EditSearchBox.Text) end)
 
 local EditDoneBtn = New("TextButton", {Size = UDim2.new(0, 90, 0, 28), Position = UDim2.new(1, -100, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Done", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, EditPanel, 6)
-EditDoneBtn.MouseButton1Click:Connect(function() EditPanel.Visible = false RefreshLists() end)
+EditDoneBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused then focused:ReleaseFocus() end
+    end)
+    EditPanel.Visible = false
+    RefreshLists()
+end)
 EditFlagsBtn.MouseButton1Click:Connect(function()
     SaveConfigPanel.Visible, ImportPanel.Visible = false, false
     EditSearchBox.Text = ""
@@ -1162,42 +1253,107 @@ EditFlagsBtn.MouseButton1Click:Connect(function()
     EditPanel.Visible = true
 end)
 
--- Import Modal
-local ImportPanel = MakeModal(440, 250)
-New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "Import FastFlags JSON", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, ImportPanel)
-local ImpBox = New("TextBox", {Size = UDim2.new(1, -32, 1, -100), Position = UDim2.new(0, 16, 0, 38), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, MultiLine = true, PlaceholderText = 'Paste JSON flags here (e.g. {"FFlagFastGPULight": "True"})...', Text = "", Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ClearTextOnFocus = false, ZIndex = 21}, ImportPanel, 6)
-local ImpCancel = New("TextButton", {Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -280, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, ImportPanel, 6)
-local ImpAppend = New("TextButton", {Size = UDim2.new(0, 95, 0, 28), Position = UDim2.new(1, -192, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Add to Existing", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 6)
-local ImpReplace = New("TextButton", {Size = UDim2.new(0, 85, 0, 28), Position = UDim2.new(1, -90, 1, -38), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "Replace All", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 4)
+-- Import Modal (With Clipboard Paste & Crash-Proof Parsing)
+local ImportPanel = MakeModal(480, 260)
+New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "Import FastFlags JSON / List", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, ImportPanel)
 
-ImportBtn.MouseButton1Click:Connect(function() SaveConfigPanel.Visible, EditPanel.Visible, ImportPanel.Visible = false, false, true ImpBox.Text = "" end)
-ImpCancel.MouseButton1Click:Connect(function() ImportPanel.Visible = false end)
+local ImpBox = New("TextBox", {
+    Size = UDim2.new(1, -32, 1, -104),
+    Position = UDim2.new(0, 16, 0, 38),
+    BackgroundColor3 = C.CardBg,
+    BorderSizePixel = 0,
+    MultiLine = true,
+    PlaceholderText = 'Paste JSON or flags here (e.g. {"FFlagFastGPULight": "True"} or FFlagFastGPULight = True)...',
+    Text = "",
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    TextColor3 = C.TxtDark,
+    PlaceholderColor3 = C.TxtMuted,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    ClearTextOnFocus = false,
+    ClipsDescendants = true,
+    ZIndex = 21
+}, ImportPanel, 6)
+New("UIStroke", {Thickness = 1, Color = C.Border}, ImpBox)
+
+local ImpCancel = New("TextButton", {Size = UDim2.new(0, 70, 0, 28), Position = UDim2.new(1, -384, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, ImportPanel, 6)
+local ImpPaste = New("TextButton", {Size = UDim2.new(0, 106, 0, 28), Position = UDim2.new(1, -306, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Paste Clipboard", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 6)
+local ImpAppend = New("TextButton", {Size = UDim2.new(0, 100, 0, 28), Position = UDim2.new(1, -194, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Add to Existing", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 6)
+local ImpReplace = New("TextButton", {Size = UDim2.new(0, 88, 0, 28), Position = UDim2.new(1, -88, 1, -38), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "Replace All", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 4)
+
+local function CloseImportModal()
+    pcall(function()
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused then focused:ReleaseFocus() end
+    end)
+    ImportPanel.Visible = false
+end
+
+ImportBtn.MouseButton1Click:Connect(function()
+    SaveConfigPanel.Visible, EditPanel.Visible = false, false
+    ImpBox.Text = ""
+    ImportPanel.Visible = true
+end)
+
+ImpCancel.MouseButton1Click:Connect(CloseImportModal)
+
+ImpPaste.MouseButton1Click:Connect(function()
+    local clip = nil
+    pcall(function()
+        local fn = getclipboard or get_clipboard or (type(getgenv) == "function" and getgenv().getclipboard)
+        if type(fn) == "function" then clip = fn() end
+    end)
+    if type(clip) == "string" and clip ~= "" then
+        ImpBox.Text = clip
+        ShowToast("Pasted from clipboard!", C.Green)
+    else
+        ShowToast("Clipboard empty or unsupported", C.Red)
+    end
+end)
+
 ImpAppend.MouseButton1Click:Connect(function()
-    if ImpBox.Text ~= "" then
-        local newFlags = AutoRepairJSON(ImpBox.Text)
+    local textVal = ImpBox.Text
+    if textVal ~= "" then
+        local newFlags = AutoRepairJSON(textVal)
         local currentFlags = AutoRepairJSON(SafeReadFile(F_PATH))
         if type(newFlags) == "table" and type(currentFlags) == "table" then
             local addCount = 0
-            for k, v in pairs(newFlags) do currentFlags[k] = v addCount = addCount + 1 end
+            for k, v in pairs(newFlags) do
+                if not IsHiddenFlag(k) then
+                    currentFlags[k] = v
+                    addCount = addCount + 1
+                end
+            end
             SafeWriteFile(F_PATH, HttpService:JSONEncode(currentFlags))
+            table.clear(flagStatusCache)
             ShowToast("Added " .. tostring(addCount) .. " flags to active list", C.Blue)
             RefreshLists()
         end
     end
-    ImportPanel.Visible = false
+    CloseImportModal()
 end)
+
 ImpReplace.MouseButton1Click:Connect(function()
-    if ImpBox.Text ~= "" then
-        local newFlags = AutoRepairJSON(ImpBox.Text)
+    local textVal = ImpBox.Text
+    if textVal ~= "" then
+        local newFlags = AutoRepairJSON(textVal)
         if type(newFlags) == "table" then
+            local cleanFlags = {}
             local rCount = 0
-            for _ in pairs(newFlags) do rCount = rCount + 1 end
-            SafeWriteFile(F_PATH, HttpService:JSONEncode(newFlags))
+            for k, v in pairs(newFlags) do
+                if not IsHiddenFlag(k) then
+                    cleanFlags[k] = v
+                    rCount = rCount + 1
+                end
+            end
+            SafeWriteFile(F_PATH, HttpService:JSONEncode(cleanFlags))
+            table.clear(flagStatusCache)
             ShowToast("Replaced active list with " .. tostring(rCount) .. " flags", C.Red)
             RefreshLists()
         end
     end
-    ImportPanel.Visible = false
+    CloseImportModal()
 end)
 
 -- Action Buttons Wiring
@@ -1216,6 +1372,7 @@ ClearBtn.MouseButton1Click:Connect(function()
     isArmed = false
     table.clear(shiftTaps)
     table.clear(l3Taps)
+    table.clear(flagStatusCache)
     ShowToast("Active flags cleared", C.Red)
     RefreshLists()
 end)
@@ -1234,6 +1391,7 @@ InjectBtn.MouseButton1Click:Connect(function()
     SafeWriteFile(F_PATH, HttpService:JSONEncode(decoded))
     _G.ShystxFlagsApplied = true
     _G.ShystxBoostEnabled = true
+    table.clear(flagStatusCache)
     ShowToast("Applied " .. tostring(count) .. " FastFlags into engine", C.Green)
     RefreshLists()
 end)
@@ -1250,7 +1408,7 @@ MinBtn.MouseButton1Click:Connect(function()
     if not Main.Visible then ImportPanel.Visible, SaveConfigPanel.Visible, EditPanel.Visible = false, false, false end
 end)
 
--- Window Drag Engine
+-- Window Drag Engine (With Bulletproof Release Safety)
 local drag, dInput, dStart, sPos = false, nil, nil, nil
 TopBar.InputBegan:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
@@ -1265,6 +1423,11 @@ UserInputService.InputChanged:Connect(function(inp)
     if inp == dInput and drag then
         local delta = inp.Position - dStart
         Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / math.max(UiScale.Scale, 0.01)), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / math.max(UiScale.Scale, 0.01))) 
+    end
+end)
+UserInputService.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        drag = false
     end
 end)
 
