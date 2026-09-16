@@ -1,10 +1,165 @@
--- =========================================================================
--- YB STRAP - STEALTH PRO SUITE (ZERO-SPACE SINK & FLUIDFORCE MASK - COMPLETE)
--- =========================================================================
+-- [Roblox CoreGui & Locale Error Filtration Suite]
+pcall(function()
+    local LogService = game:GetService("LogService")
+    local CoreGui = game:GetService("CoreGui")
 
+    local function IsSuppressed(msg)
+        if type(msg) ~= "string" then return false end
+        local m = msg:lower()
+        return m:find("locales.en-us", 1, true) ~= nil
+            or m:find("expected ')'", 1, true) ~= nil
+            or m:find("missing argument", 1, true) ~= nil
+            or m:find("modules.common.locales", 1, true) ~= nil
+            or m:find("script 'coregui", 1, true) ~= nil
+            or m:find("coregui.5824", 1, true) ~= nil
+            or m:find("coregui.26628", 1, true) ~= nil
+    end
+
+    local function FilterHistory(hist)
+        if type(hist) ~= "table" then return hist end
+        local clean = {}
+        local skipStack = false
+        for _, item in ipairs(hist) do
+            local msg = ""
+            if type(item) == "table" then
+                msg = tostring(item.message or item.Message or "")
+            else
+                msg = tostring(item)
+            end
+            if IsSuppressed(msg) then
+                skipStack = true
+            elseif skipStack then
+                local mLow = msg:lower()
+                if mLow:find("stack begin", 1, true) or mLow:find("line 1", 1, true) or mLow:find("script 'coregui", 1, true) or mLow:find("stack end", 1, true) then
+                    if mLow:find("stack end", 1, true) then skipStack = false end
+                else
+                    skipStack = false
+                    table.insert(clean, item)
+                end
+            else
+                table.insert(clean, item)
+            end
+        end
+        return clean
+    end
+
+    if typeof(hookfunction) == "function" then
+        local oldGetLog
+        oldGetLog = hookfunction(LogService.GetLogHistory, function(self, ...)
+            return FilterHistory(oldGetLog(self, ...))
+        end)
+    end
+
+    if typeof(hookmetamethod) == "function" then
+        local oldNm
+        oldNm = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod and getnamecallmethod()
+            if method == "GetLogHistory" and self == LogService then
+                return FilterHistory(oldNm(self, ...))
+            end
+            return oldNm(self, ...)
+        end)
+    end
+
+    LogService.MessageOut:Connect(function(msg, msgType)
+        -- silences localized missing argument logging
+    end)
+
+    local function CleanConsoleUI()
+        pcall(function()
+            local devConsole = CoreGui:FindFirstChild("DevConsoleMaster") or CoreGui:FindFirstChild("DeveloperConsole")
+            if not devConsole then return end
+            
+            local isStackActive = false
+            local toPurge = {}
+            
+            for _, desc in ipairs(devConsole:GetDescendants()) do
+                if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+                    local txt = desc.Text or ""
+                    if IsSuppressed(txt) then
+                        isStackActive = true
+                        local frame = desc:FindFirstAncestorOfClass("Frame") or desc
+                        toPurge[frame] = true
+                    elseif isStackActive then
+                        local tLow = txt:lower()
+                        if tLow:find("stack begin", 1, true) or tLow:find("line 1", 1, true) or tLow:find("script 'coregui", 1, true) or tLow:find("stack end", 1, true) then
+                            local frame = desc:FindFirstAncestorOfClass("Frame") or desc
+                            toPurge[frame] = true
+                            if tLow:find("stack end", 1, true) then
+                                isStackActive = false
+                            end
+                        else
+                            isStackActive = false
+                        end
+                    end
+                end
+            end
+            
+            for frame in pairs(toPurge) do
+                pcall(function()
+                    frame.Visible = false
+                    frame.Size = UDim2.new(0, 0, 0, 0)
+                    frame:Destroy()
+                end)
+            end
+        end)
+    end
+
+    task.spawn(function()
+        while true do
+            CleanConsoleUI()
+            task.wait(0.25)
+        end
+    end)
+
+    local function HookDevConsole(dev)
+        if not dev then return end
+        dev.DescendantAdded:Connect(function(desc)
+            if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+                if IsSuppressed(desc.Text) then
+                    task.spawn(CleanConsoleUI)
+                end
+            end
+        end)
+    end
+
+    local curDev = CoreGui:FindFirstChild("DevConsoleMaster") or CoreGui:FindFirstChild("DeveloperConsole")
+    if curDev then HookDevConsole(curDev) end
+    CoreGui.ChildAdded:Connect(function(child)
+        if child.Name == "DevConsoleMaster" or child.Name == "DeveloperConsole" then
+            HookDevConsole(child)
+            task.spawn(CleanConsoleUI)
+        end
+    end)
+end)
+
+-- Indestructible Pure Local Quine (Zero getgenv() / Zero Disk Files)
+local template = [==[local s = %q
 if not game:IsLoaded() then pcall(function() game.Loaded:Wait() end) end
+local Players = game:GetService("Players")
+repeat task.wait(0.1) until Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
 
--- Root Singleton Engine Guard
+local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
+if q then pcall(function() q(string.format(s, s)) end) end
+
+local DIR, F_PATH, STATE_PATH = "ZoneStraps", "ZoneStraps/flags.json", "ZoneStraps/state.json"
+local isfile = isfile or (type(getgenv) == "function" and getgenv().isfile)
+local readfile = readfile or (type(getgenv) == "function" and getgenv().readfile)
+
+local function CheckInjected()
+    local ok, res = pcall(function()
+        if type(isfile) == "function" and isfile(STATE_PATH) and type(readfile) == "function" then
+            local raw = readfile(STATE_PATH)
+            return raw and raw:find('"injected"', 1, true) and raw:find('true', 1, true)
+        end
+        return false
+    end)
+    return ok and res
+end
+
+if not CheckInjected() and not _G.ShystxFlagsApplied then return end
+
 if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
     for _, conn in ipairs(_G.ShystxGlobalConns) do
         if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
@@ -16,507 +171,153 @@ _G.ShystxGlobalConns = {}
 local thisSession = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
 _G.ShystxCurrentSession = thisSession
 _G.ShystxIsBoosting = false
-_G.ShystxFlagsApplied = false
-_G.ShystxBoostEnabled = false
+_G.ShystxFlagsApplied = true
+_G.ShystxBoostEnabled = true
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local UserInputService = game:GetService("UserInputService")
-local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 
 local function TrackConn(c)
     if c then table.insert(_G.ShystxGlobalConns, c) end
     return c
 end
 
-local function SafeQueue(code)
-    local fn = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
-    if type(fn) == "function" then pcall(function() fn(code) end) end
+local function CleanFlagName(str)
+    if type(str) ~= "string" then return "" end
+    return str:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", ""):gsub("^FBool", "")
 end
 
-local setfflag = setfflag or set_fflag or setflag or set_flag
-if not setfflag and type(getgenv) == "function" then
-    local g = getgenv()
-    setfflag = g.setfflag or g.set_fflag or g.setflag or g.set_flag
+local rawSetFFlag = (type(getgenv) == "function" and (getgenv().setfflag or getgenv().setfastflag or getgenv().set_fflag or getgenv().set_fastflag))
+    or (type(getfenv) == "function" and (getfenv().setfflag or getfenv().setfastflag))
+    or _G.setfflag or _G.setfastflag
+    or setfflag or setfastflag or set_fflag or set_fastflag
+
+local rawSetFpsCap = (type(getgenv) == "function" and (getgenv().setfpscap or getgenv().set_fps_cap))
+    or (type(getfenv) == "function" and getfenv().setfpscap)
+    or _G.setfpscap or setfpscap or set_fps_cap
+
+local function TrySetFlag(f, v)
+    if type(f) ~= "string" then return false end
+    local clean = CleanFlagName(f)
+    local num = tonumber(v)
+    local str = tostring(v)
+    local bool = nil
+    local low = str:lower()
+    if low == "true" then bool = true
+    elseif low == "false" then bool = false end
+
+    if (f:find("TaskSchedulerTargetFps") or clean:find("TaskSchedulerTargetFps")) and num and type(rawSetFpsCap) == "function" then
+        pcall(function() rawSetFpsCap(num) end)
+    end
+
+    local candidates = {f, clean, "FFlag" .. clean, "DFInt" .. clean, "FInt" .. clean, "DFFlag" .. clean}
+    local success = false
+
+    local function callSetter(fn, name, val)
+        local ok = pcall(fn, name, val)
+        if ok then success = true end
+        return ok
+    end
+
+    if type(rawSetFFlag) == "function" then
+        for _, name in ipairs(candidates) do
+            if bool ~= nil then
+                callSetter(rawSetFFlag, name, bool)
+                callSetter(rawSetFFlag, name, bool and "True" or "False")
+                callSetter(rawSetFFlag, name, bool and "true" or "false")
+            elseif num ~= nil then
+                callSetter(rawSetFFlag, name, num)
+                callSetter(rawSetFFlag, name, str)
+            else
+                callSetter(rawSetFFlag, name, str)
+            end
+        end
+    end
+
+    pcall(function()
+        if settings and typeof(settings) == "function" then
+            local s = settings()
+            if s and type(s.SetFFlag) == "function" then
+                for _, name in ipairs(candidates) do
+                    callSetter(function(n, val) s:SetFFlag(n, tostring(val)) end, name, v)
+                end
+            end
+        end
+    end)
+
+    pcall(function()
+        if game and type(game.SetFFlag) == "function" then
+            for _, name in ipairs(candidates) do
+                callSetter(function(n, val) game:SetFFlag(n, tostring(val)) end, name, v)
+            end
+        end
+    end)
+
+    return success
 end
-if not setfflag then setfflag = _G.setfflag or _G.setflag or shared.setfflag or shared.setflag end
 
-local function CleanFlag(name)
-    return name:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", "")
-end
+pcall(function()
+    if type(isfile) == "function" and isfile(F_PATH) and type(readfile) == "function" then
+        local raw = readfile(F_PATH)
+        if raw and raw ~= "" then
+            local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
+            if ok and type(parsed) == "table" then
+                for k, val in pairs(parsed) do TrySetFlag(k, val) end
+            end
+        end
+    end
+    TrySetFlag("SimDefaultFluidForceEnabled", true)
+    TrySetFlag("FIntSimDefaultFluidForceEnabled", 999)
+end)
 
-local function TrySetFlag(flagName, val)
-    if type(setfflag) ~= "function" then return false end
-    local clean = CleanFlag(flagName)
-    local ok = pcall(function() setfflag(flagName, val) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(flagName, tostring(val)) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(clean, val) end)
-    if ok then return true end
-    return pcall(function() setfflag(clean, tostring(val)) end)
-end
-
--- FluidForce flag will apply along with other flags upon clicking Apply Flags
-
--- Silent Background Boost Engine
-local shiftTaps = {}
-local l3Taps = {}
-local isArmed = false
-local armedByController = false
-local armedExpiration = 0
-local lastBoostTime = 0
-local lastToggleTime = 0
-
+local isArmed, armedExpiration, lastBoostTime = true, math.huge, 0
 local function ToggleBoost()
-    if not _G.ShystxFlagsApplied then return end
-    local now = os.clock()
-    if now - lastToggleTime < 0.25 then return end
-    lastToggleTime = now
+    if _G.ShystxFlagsApplied ~= true then return end
     _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
-    if not _G.ShystxBoostEnabled then
-        isArmed = false
-        table.clear(shiftTaps)
-        table.clear(l3Taps)
+    if not _G.ShystxBoostEnabled then isArmed = false end
+end
+
+TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
+    if inp.KeyCode == Enum.KeyCode.DPadUp then
+        ToggleBoost()
+    elseif not gpe and (inp.KeyCode == Enum.KeyCode.LeftControl or inp.KeyCode == Enum.KeyCode.RightControl) then
+        ToggleBoost()
     end
-end
-
-local TARGET_KEYS = {
-    [Enum.KeyCode.DPadUp] = true,
-    [Enum.KeyCode.LeftControl] = true,
-    [Enum.KeyCode.RightControl] = true,
-    ["DPadUp"] = true,
-    ["LeftControl"] = true,
-    ["RightControl"] = true
-}
-
-local TARGET_PATTERNS = {
-    "leftcontrol",
-    "rightcontrol",
-    "dpadup",
-    "%[key release%]",
-    "%[key press%]",
-    "%[key hold%]",
-    "key release",
-    "key press",
-    "key hold",
-    "key:%s*leftcontrol",
-    "key:%s*rightcontrol",
-    "key:%s*dpadup",
-    "fluidforce",
-    "simdefaultfluidforceenabled",
-    "missing argument #3",
-    "modules%.common%.locales",
-    "locales%.en%-us",
-    "coregui%.20172",
-    "script 'coregui"
-}
-
-local function HasTargetOnly(str)
-    if type(str) ~= "string" then return false end
-    local lower = str:lower()
-    for _, pat in ipairs(TARGET_PATTERNS) do
-        if lower:find(pat) then
-            return true
-        end
-    end
-    return false
-end
-
-local function StripTargetLines(str)
-    if type(str) ~= "string" then return str end
-    local lines = {}
-    for line in str:gmatch("[^\r\n]+") do
-        if not HasTargetOnly(line) and not line:match("^%s*$") then
-            table.insert(lines, line)
-        end
-    end
-    return table.concat(lines, "\n")
-end
-
--- 1. Engine-Level ContextAction Priority Sink (Swallows keypress & key release before any space/line is made)
-pcall(function()
-    ContextActionService:BindActionAtPriority("ShystxZeroSpaceSink", function(actionName, inputState, inputObject)
-        -- Allow normal typing, selection, and Ctrl+V pasting in TextBoxes!
-        local focused = nil
-        pcall(function() focused = UserInputService:GetFocusedTextBox() end)
-        if focused then
-            return Enum.ContextActionResult.Pass
-        end
-
-        if inputState == Enum.UserInputState.Begin then
-            ToggleBoost()
-        end
-        return Enum.ContextActionResult.Sink
-    end, false, 2147483647, Enum.KeyCode.LeftControl, Enum.KeyCode.RightControl, Enum.KeyCode.DPadUp)
-end)
-
--- 2. Drop Keylogger Connection Callbacks & Prevent CoreGui Missing Argument #3
-local getconnections = getconnections or (type(getgenv) == "function" and getgenv().getconnections)
-local hookfunction = hookfunction or hookfunc or (type(getgenv) == "function" and getgenv().hookfunction)
-local newcclosure = newcclosure or function(f) return f end
-
-local function IsCoreConnection(conn)
-    local isCore = false
-    pcall(function()
-        if type(getinfo) == "function" and conn and conn.Function then
-            local info = getinfo(conn.Function)
-            if info and info.source then
-                local s = info.source:lower()
-                if s:find("coregui") or s:find("robloxgui") or s:find("playerscripts.playermodule") then
-                    isCore = true
-                end
-            end
-        end
-    end)
-    return isCore
-end
-
-local hookedFns = setmetatable({}, {__mode = "k"})
-
-local function FilterConnection(conn)
-    if not conn or not conn.Function or hookedFns[conn.Function] then return end
-    if IsCoreConnection(conn) then return end
-
-    pcall(function()
-        local oldFn = conn.Function
-        local wrapped = newcclosure(function(...)
-            local args = {...}
-            local input = args[1]
-            if input then
-                local k = nil
-                pcall(function() k = input.KeyCode end)
-                if k and (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
-                    return
-                end
-            end
-            return oldFn(...)
-        end)
-
-        if type(hookfunction) == "function" then
-            hookfunction(conn.Function, wrapped)
-        else
-            conn.Function = wrapped
-        end
-        hookedFns[conn.Function] = true
-    end)
-end
-
-local function FilterLogConnection(conn)
-    if not conn or not conn.Function or hookedFns[conn.Function] then return end
-    if IsCoreConnection(conn) then return end
-
-    pcall(function()
-        local oldFn = conn.Function
-        local wrapped = newcclosure(function(...)
-            local args = {...}
-            local msg = tostring(args[1] or "")
-            if HasTargetOnly(msg) then
-                return
-            end
-            return oldFn(...)
-        end)
-
-        if type(hookfunction) == "function" then
-            hookfunction(conn.Function, wrapped)
-        else
-            conn.Function = wrapped
-        end
-        hookedFns[conn.Function] = true
-    end)
-end
-
-local function ScanAllConnections()
-    if type(getconnections) ~= "function" then return end
-    pcall(function()
-        for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do FilterConnection(conn) end
-        for _, conn in ipairs(getconnections(UserInputService.InputEnded)) do FilterConnection(conn) end
-        local LogService = game:GetService("LogService")
-        if LogService and LogService.MessageOut then
-            for _, conn in ipairs(getconnections(LogService.MessageOut)) do FilterLogConnection(conn) end
-        end
-    end)
-end
-
-ScanAllConnections()
-task.spawn(function()
-    while _G.ShystxCurrentSession == thisSession do
-        task.wait(1.5)
-        ScanAllConnections()
-    end
-end)
-
--- Metamethod __namecall protection for runtime connection registration
-pcall(function()
-    if type(getrawmetatable) == "function" and type(hookmetamethod) == "function" then
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-            if (method == "Connect" or method == "connect") and (self == UserInputService.InputBegan or self == UserInputService.InputEnded) then
-                local fn = args[1]
-                if type(fn) == "function" then
-                    local oldFn = fn
-                    args[1] = newcclosure(function(...)
-                        local cArgs = {...}
-                        local input = cArgs[1]
-                        if input then
-                            local k = nil
-                            pcall(function() k = input.KeyCode end)
-                            if k and (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
-                                return
-                            end
-                        end
-                        return oldFn(...)
-                    end)
-                    return oldNamecall(self, table.unpack(args))
-                end
-            end
-            return oldNamecall(self, ...)
-        end))
-    end
-end)
-
--- Stealth Key State Query Hooks
-pcall(function()
-    if type(hookfunction) == "function" and typeof(UserInputService.IsKeyDown) == "function" then
-        local oldIsKeyDown
-        oldIsKeyDown = hookfunction(UserInputService.IsKeyDown, newcclosure(function(self, key, ...)
-            if TARGET_KEYS[key] or (typeof(key) == "EnumItem" and TARGET_KEYS[key.Name]) then
-                return false
-            end
-            return oldIsKeyDown(self, key, ...)
-        end))
-    end
-end)
-
-pcall(function()
-    if type(hookfunction) == "function" and typeof(UserInputService.GetKeysPressed) == "function" then
-        local oldGetKeysPressed
-        oldGetKeysPressed = hookfunction(UserInputService.GetKeysPressed, newcclosure(function(self, ...)
-            local keys = oldGetKeysPressed(self, ...)
-            if type(keys) == "table" then
-                local filtered = {}
-                for _, kObj in ipairs(keys) do
-                    local k = kObj.KeyCode
-                    if not (TARGET_KEYS[k] or (typeof(k) == "EnumItem" and TARGET_KEYS[k.Name])) then
-                        table.insert(filtered, kObj)
-                    end
-                end
-                return filtered
-            end
-            return keys
-        end))
-    end
-end)
-
--- 3. Zero-Space Console / Print Sinker Across All Environments
-if type(hookfunction) == "function" then
-    local function SinkPrint(tbl, fnName)
-        pcall(function()
-            if type(tbl) == "table" and tbl[fnName] then
-                local old
-                old = hookfunction(tbl[fnName], newcclosure(function(...)
-                    local args = {...}
-                    for i = 1, #args do
-                        local strVal = tostring(args[i])
-                        if HasTargetOnly(strVal) or strVal:find("Something unexpectedly tried to set the parent") then
-                            return
-                        end
-                    end
-                    return old(...)
-                end))
-            end
-        end)
-    end
-
-    pcall(function() SinkPrint(getfenv(), "print") end)
-    pcall(function() SinkPrint(getfenv(), "warn") end)
-
-    local renv = (type(getrenv) == "function" and getrenv()) or _G
-    pcall(function() SinkPrint(renv, "print") end)
-    pcall(function() SinkPrint(renv, "warn") end)
-    pcall(function() SinkPrint(renv, "info") end)
-
-    if type(getgenv) == "function" then
-        local g = getgenv()
-        pcall(function() SinkPrint(g, "print") end)
-        pcall(function() SinkPrint(g, "warn") end)
-        pcall(function() SinkPrint(g, "rconsoleprint") end)
-        pcall(function() SinkPrint(g, "rconsolewarn") end)
-        pcall(function() SinkPrint(g, "consoleprint") end)
-    end
-
-    pcall(function()
-        local ts = game:GetService("TestService")
-        if ts and ts.Message then
-            local oldMsg
-            oldMsg = hookfunction(ts.Message, newcclosure(function(self, msg, ...)
-                if HasTargetOnly(tostring(msg)) then return end
-                return oldMsg(self, msg, ...)
-            end))
-        end
-    end)
-end
-
--- 4. Zero-Space Pre-Render GUI Collapser (Completely removes rows so zero blank lines or empty spaces remain)
-local isSanitizing = false
-local function SafeCollapse(inst)
-    pcall(function()
-        inst.Text = ""
-        inst.Visible = false
-        inst.TextTransparency = 1
-        inst.BackgroundTransparency = 1
-        inst.Size = UDim2.new(0, 0, 0, 0)
-
-        local p = inst.Parent
-        if p then
-            if p:IsA("ScrollingFrame") then
-                pcall(function() inst.Parent = nil end)
-            elseif p:IsA("GuiObject") and not p:IsA("ScreenGui") then
-                p.Visible = false
-                p.BackgroundTransparency = 1
-                p.Size = UDim2.new(0, 0, 0, 0)
-                pcall(function()
-                    for _, child in ipairs(p:GetChildren()) do
-                        if child:IsA("GuiObject") then
-                            child.Visible = false
-                            child.Size = UDim2.new(0, 0, 0, 0)
-                        end
-                    end
-                end)
-                pcall(function() p.Parent = nil end)
-            end
-        end
-    end)
-end
-
-local function AttachWatcher(inst)
-    if not inst or not (inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("TextButton")) then return end
-    -- CRITICAL: Absolutely NEVER sanitize, watch, or collapse anything in our own studio UI!
-    local isOurs = false
-    pcall(function()
-        if ScreenGui and inst:IsDescendantOf(ScreenGui) then
-            isOurs = true
-        elseif inst.Name == "yblazy_ffm" or (inst.Parent and inst.Parent.Name == "yblazy_ffm") then
-            isOurs = true
-        end
-    end)
-    if isOurs then return end
-
-    local function Validate()
-        if isSanitizing or _G.ShystxCurrentSession ~= thisSession then return end
-        pcall(function()
-            if ScreenGui and inst:IsDescendantOf(ScreenGui) then return end
-            local t = inst.Text
-            if t and HasTargetOnly(t) then
-                isSanitizing = true
-                local cleaned = StripTargetLines(t)
-                if cleaned == "" or cleaned:match("^%s*$") then
-                    SafeCollapse(inst)
-                else
-                    inst.Text = cleaned
-                end
-                isSanitizing = false
-            end
-        end)
-    end
-    Validate()
-    pcall(function()
-        TrackConn(inst:GetPropertyChangedSignal("Text"):Connect(Validate))
-    end)
-end
-
-local function HookContainer(c)
-    if not c then return end
-    pcall(function()
-        for _, item in ipairs(c:GetDescendants()) do
-            if not (ScreenGui and item:IsDescendantOf(ScreenGui)) then
-                AttachWatcher(item)
-            end
-        end
-        TrackConn(c.DescendantAdded:Connect(function(item)
-            if not (ScreenGui and item:IsDescendantOf(ScreenGui)) then
-                AttachWatcher(item)
-            end
-        end))
-    end)
-end
-
-task.spawn(function()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 15)
-    HookContainer(pg)
-end)
-
-TrackConn(LocalPlayer.ChildAdded:Connect(function(c)
-    if c.Name == "PlayerGui" then HookContainer(c) end
 end))
 
-pcall(function() HookContainer(game:GetService("CoreGui")) end)
-pcall(function() if type(gethui) == "function" then HookContainer(gethui()) end end)
-
-local function RecordTap(tapArray, isController)
-    if _G.ShystxCurrentSession ~= thisSession or not _G.ShystxFlagsApplied or _G.ShystxBoostEnabled ~= true then return end
-    local now = os.clock()
-    table.insert(tapArray, now)
-    while #tapArray > 0 and (now - tapArray[1] > 0.65) do
-        table.remove(tapArray, 1)
-    end
-    if #tapArray >= 2 then
-        table.clear(tapArray)
-        isArmed = true
-        armedByController = isController or false
-        armedExpiration = now + 2.50
-    end
-end
-
--- Tuned boost curve (9.8 peak, 7 frames)
-local FIXED_UPWARD_CURVE = {9.8, 8.5, 7.2, 5.8, 4.4, 3.1, 1.9}
-
-local function SetLinearVel(part, x, y, z)
-    pcall(function() part.AssemblyLinearVelocity = Vector3.new(x, y, z) end)
-    pcall(function() part.Velocity = Vector3.new(x, y, z) end)
-end
-
-local function GetLinearVel(part)
-    local v = nil
-    pcall(function() v = part.AssemblyLinearVelocity end)
-    if not v then pcall(function() v = part.Velocity end) end
-    return v or Vector3.zero
-end
-
+-- Tuned downward further for balanced, natural jump trajectory
+local SMOOTH_UPWARD_CURVE = {6.0, 5.0, 4.0, 3.0, 2.0, 1.2, 0.5}
 local function ExecuteBoost()
-    if _G.ShystxCurrentSession ~= thisSession or not _G.ShystxFlagsApplied or _G.ShystxBoostEnabled ~= true or _G.ShystxIsBoosting then return end
-
+    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
     local now = os.clock()
-    if not isArmed or (now > armedExpiration) then
-        isArmed = false
-        return
-    end
+    if not isArmed or (now > armedExpiration) then isArmed = false; return end
     if now - lastBoostTime < 0.35 then return end
-
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not root or not hum then return end
-
-    local wasController = armedByController
     isArmed = false
     lastBoostTime = now
     _G.ShystxIsBoosting = true
-
     task.spawn(function()
-        for i = 1, #FIXED_UPWARD_CURVE do
-            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent or _G.ShystxBoostEnabled ~= true then break end
-            local curVel = GetLinearVel(root)
-            local boostVal = FIXED_UPWARD_CURVE[i] * (wasController and 0.78 or 1.0)
-            SetLinearVel(root, curVel.X, curVel.Y + boostVal, curVel.Z)
+        for i = 1, #SMOOTH_UPWARD_CURVE do
+            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true then break end
+            local cur = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
+            local bVal = SMOOTH_UPWARD_CURVE[i]
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(cur.X, cur.Y + bVal, cur.Z) end)
+            pcall(function() root.Velocity = Vector3.new(cur.X, cur.Y + bVal, cur.Z) end)
             RunService.Heartbeat:Wait()
         end
         _G.ShystxIsBoosting = false
     end)
+end
+
+local function TryTriggerBoost()
+    if isArmed and _G.ShystxBoostEnabled == true and _G.ShystxFlagsApplied == true then
+        ExecuteBoost()
+    end
 end
 
 local charConns = {}
@@ -524,891 +325,975 @@ local function SetupCharacter(char)
     if not char or _G.ShystxCurrentSession ~= thisSession then return end
     for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
     charConns = {}
-
     local hum = char:WaitForChild("Humanoid", 5)
     if not hum then return end
-
-    local scConn = hum.StateChanged:Connect(function(_, st)
-        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) and isArmed and _G.ShystxFlagsApplied then
-            ExecuteBoost()
+    local sc = hum.StateChanged:Connect(function(_, st)
+        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then
+            TryTriggerBoost()
+        elseif (st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.Running) then
+            isArmed = true
+            _G.ShystxIsBoosting = false
         end
     end)
-    table.insert(charConns, scConn)
-    TrackConn(scConn)
-
-    local jConn = hum.Jumping:Connect(function(active)
-        if active and isArmed and _G.ShystxFlagsApplied then ExecuteBoost() end
+    table.insert(charConns, sc); TrackConn(sc)
+    local jc = hum.Jumping:Connect(function(act)
+        if act then TryTriggerBoost() end
     end)
-    table.insert(charConns, jConn)
-    TrackConn(jConn)
+    table.insert(charConns, jc); TrackConn(jc)
 end
 
-TrackConn(UserInputService.JumpRequest:Connect(function()
-    if isArmed and _G.ShystxFlagsApplied and _G.ShystxBoostEnabled == true then ExecuteBoost() end
-end))
-
-TrackConn(UserInputService.InputBegan:Connect(function(inp, _)
-    local k = inp.KeyCode
-    if k == Enum.KeyCode.DPadUp or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.RightControl then
-        ToggleBoost()
-    elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.RightShift then
-        RecordTap(shiftTaps, false)
-    elseif k == Enum.KeyCode.ButtonL3 then
-        RecordTap(l3Taps, true)
-    end
-end))
-
+TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
 if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
 TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
+]==]
+local fullSource = string.format(template, template)
+local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
 
 -- =========================================================================
--- PROFESSIONAL FASTFLAG STUDIO (ANIMATED, PARTICLE FX, MULTI-CONFIG)
+-- FASTFLAG MANAGER & SMOOTH BOOST SUITE (LIVE WORKSPACE)
 -- =========================================================================
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-
-local setfflag = setfflag or set_fflag or setflag or set_flag
-if not setfflag and type(getgenv) == "function" then
-    local g = getgenv()
-    setfflag = g.setfflag or g.set_fflag or g.setflag or g.set_flag
+if _G.ShystxGlobalConns and type(_G.ShystxGlobalConns) == "table" then
+    for _, conn in ipairs(_G.ShystxGlobalConns) do
+        if conn and conn.Disconnect then pcall(function() conn:Disconnect() end) end
+    end
+    table.clear(_G.ShystxGlobalConns)
 end
-if not setfflag then setfflag = _G.setfflag or _G.setflag or shared.setfflag or shared.setflag end
+_G.ShystxGlobalConns = {}
 
-local getfflag = getfflag or get_fflag or getflag or get_flag
-if not getfflag and type(getgenv) == "function" then
-    local g = getgenv()
-    getfflag = g.getfflag or g.get_fflag or g.getflag or g.get_flag
+local thisSession = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
+_G.ShystxCurrentSession = thisSession
+_G.ShystxIsBoosting = false
+
+-- Boost starts STRICTLY DISABLED on local script launch until user applies flags
+_G.ShystxFlagsApplied = false
+_G.ShystxBoostEnabled = false
+
+local DIR, F_PATH, STATE_PATH, CFG_DIR = "ZoneStraps", "ZoneStraps/flags.json", "ZoneStraps/state.json", "ZoneStraps/Configs"
+
+local function getExploitGlobal(name)
+    local val = nil
+    if type(getgenv) == "function" then pcall(function() val = getgenv()[name] end) end
+    if val ~= nil then return val end
+    if type(getfenv) == "function" then pcall(function() val = getfenv()[name] end) end
+    if val ~= nil then return val end
+    pcall(function() val = _G[name] end)
+    if val ~= nil then return val end
+    pcall(function() val = shared[name] end)
+    if val ~= nil then return val end
+    if type(getrenv) == "function" then pcall(function() val = getrenv()[name] end) end
+    return val
 end
-if not getfflag then getfflag = _G.getfflag or _G.getflag or shared.getfflag or shared.getflag end
 
-local isfile = isfile or (type(getgenv) == "function" and getgenv().isfile)
-local isfolder = isfolder or (type(getgenv) == "function" and getgenv().isfolder)
-local makefolder = makefolder or (type(getgenv) == "function" and getgenv().makefolder)
-local writefile = writefile or (type(getgenv) == "function" and getgenv().writefile)
-local readfile = readfile or (type(getgenv) == "function" and getgenv().readfile)
-local setclipboard = setclipboard or toclipboard or (type(getgenv) == "function" and getgenv().setclipboard)
+local isfile = getExploitGlobal("isfile") or isfile
+local isfolder = getExploitGlobal("isfolder") or isfolder
+local makefolder = getExploitGlobal("makefolder") or makefolder
+local readfile = getExploitGlobal("readfile") or readfile
+local writefile = getExploitGlobal("writefile") or writefile
+local listfiles = getExploitGlobal("listfiles") or listfiles
+local delfile = getExploitGlobal("delfile") or getExploitGlobal("deletefile") or delfile or deletefile
+local setclipboard = getExploitGlobal("setclipboard") or setclipboard
 
-if not _G.ShystxSavedConfigs then _G.ShystxSavedConfigs = {} end
-local virtualFiles = {}
-local F_PATH, CONFIGS_PATH = "ZoneStraps/FFlags.json", "ZoneStraps/Configs.json"
-local ALT_CONFIGS_PATH = "Configs.json"
+local rawSetFFlag = getExploitGlobal("setfflag") 
+    or getExploitGlobal("setfastflag") 
+    or getExploitGlobal("set_fflag") 
+    or getExploitGlobal("set_fastflag") 
+    or getExploitGlobal("setflag") 
+    or getExploitGlobal("set_flag")
+    or setfflag or setfastflag or set_fflag or set_fastflag or setflag or set_flag
 
-if type(isfolder) == "function" and type(makefolder) == "function" then
-    pcall(function() if not isfolder("ZoneStraps") then makefolder("ZoneStraps") end end)
+local rawSetFpsCap = getExploitGlobal("setfpscap") or getExploitGlobal("set_fps_cap") or setfpscap or set_fps_cap
+
+pcall(function()
+    if type(isfolder) == "function" and type(makefolder) == "function" then
+        if not isfolder(DIR) then makefolder(DIR) end
+        if not isfolder(CFG_DIR) then makefolder(CFG_DIR) end
+    end
+end)
+
+local function SafeReadFile(path)
+    local data = nil
+    pcall(function()
+        if type(isfile) == "function" and isfile(path) and type(readfile) == "function" then
+            data = readfile(path)
+        end
+    end)
+    return data
 end
 
 local function SafeWriteFile(path, content)
-    virtualFiles[path] = content
-    local written = false
-    if type(writefile) == "function" then
-        local ok = pcall(function() writefile(path, content) end)
-        if ok then written = true end
-        if path == CONFIGS_PATH and not written then
-            pcall(function() writefile(ALT_CONFIGS_PATH, content) end)
+    pcall(function()
+        if type(writefile) == "function" then
+            writefile(path, content)
+        end
+    end)
+end
+
+local function SafeGetClipboard()
+    local text = ""
+    pcall(function()
+        local getclip = getExploitGlobal("getclipboard") or getclipboard
+        if type(getclip) == "function" then text = tostring(getclip() or "") end
+    end)
+    return text
+end
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+local function AutoRepairJSON(raw)
+    if not raw or raw == "" then return {} end
+    local ok, res = pcall(function() return HttpService:JSONDecode(raw) end)
+    if ok and type(res) == "table" then return res end
+    local dict = {}
+    for line in raw:gmatch("[^\r\n]+") do
+        local rawK, rawV = line:match("([^:=%s]+)%s*[:=]%s*(.+)")
+        if rawK and rawV then
+            local k = rawK:gsub('^"', ""):gsub("^'", ""):gsub('"$', ""):gsub("'$", "")
+            local v = rawV:gsub('^"', ""):gsub("^'", ""):gsub('"$', ""):gsub("'$", ""):gsub(",$", "")
+            local low = v:lower()
+            if low == "true" then dict[k] = true
+            elseif low == "false" then dict[k] = false
+            elseif tonumber(v) then dict[k] = tonumber(v)
+            else dict[k] = v end
         end
     end
+    return dict
 end
 
-local function SafeReadFile(path)
-    if type(isfile) == "function" and type(readfile) == "function" then
-        local ok, content = pcall(function() return readfile(path) end)
-        if ok and content and content ~= "" then return content end
-        if path == CONFIGS_PATH then
-            local ok2, content2 = pcall(function() return readfile(ALT_CONFIGS_PATH) end)
-            if ok2 and content2 and content2 ~= "" then return content2 end
+local function CleanFlagName(str)
+    if type(str) ~= "string" then return "" end
+    return str:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", ""):gsub("^FBool", "")
+end
+
+local function TrySetFlag(f, v)
+    if type(f) ~= "string" then return false end
+    local clean = CleanFlagName(f)
+    local num = tonumber(v)
+    local str = tostring(v)
+    local bool = nil
+    local low = str:lower()
+    if low == "true" then bool = true
+    elseif low == "false" then bool = false end
+
+    if (f:find("TaskSchedulerTargetFps") or clean:find("TaskSchedulerTargetFps")) and num and type(rawSetFpsCap) == "function" then
+        pcall(function() rawSetFpsCap(num) end)
+    end
+
+    local candidates = {f, clean, "FFlag" .. clean, "DFInt" .. clean, "FInt" .. clean, "DFFlag" .. clean}
+    local success = false
+
+    local function callSetter(fn, name, val)
+        local ok = pcall(fn, name, val)
+        if ok then success = true end
+        return ok
+    end
+
+    -- 1. Exploit setfflag API
+    if type(rawSetFFlag) == "function" then
+        for _, name in ipairs(candidates) do
+            if bool ~= nil then
+                callSetter(rawSetFFlag, name, bool)
+                callSetter(rawSetFFlag, name, bool and "True" or "False")
+                callSetter(rawSetFFlag, name, bool and "true" or "false")
+            elseif num ~= nil then
+                callSetter(rawSetFFlag, name, num)
+                callSetter(rawSetFFlag, name, str)
+            else
+                callSetter(rawSetFFlag, name, str)
+            end
         end
     end
-    return virtualFiles[path] or "{}"
-end
 
-local parentGui = nil
-pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
-if not parentGui then parentGui = game:GetService("CoreGui") end
-if not parentGui then parentGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5) end
+    -- 2. Engine settings():SetFFlag
+    pcall(function()
+        if settings and typeof(settings) == "function" then
+            local s = settings()
+            if s and type(s.SetFFlag) == "function" then
+                for _, name in ipairs(candidates) do
+                    callSetter(function(n, val) s:SetFFlag(n, tostring(val)) end, name, v)
+                end
+            end
+        end
+    end)
 
-if parentGui:FindFirstChild("yblazy_ffm") then
-    pcall(function() parentGui.yblazy_ffm:Destroy() end)
-end
+    -- 3. Engine game:SetFFlag
+    pcall(function()
+        if game and type(game.SetFFlag) == "function" then
+            for _, name in ipairs(candidates) do
+                callSetter(function(n, val) game:SetFFlag(n, tostring(val)) end, name, v)
+            end
+        end
+    end)
 
-local function CleanFlagName(flag)
-    return flag:gsub("^DFInt", ""):gsub("^DFFlag", ""):gsub("^FFlag", ""):gsub("^FInt", ""):gsub("^DFString", ""):gsub("^FString", "")
+    return success
 end
 
 local function IsHiddenFlag(flagName)
     if type(flagName) ~= "string" then return false end
-    local lower = flagName:lower()
-    return lower:find("fluidforce") or lower:find("simdefaultfluidforceenabled")
+    local clean = CleanFlagName(flagName):lower()
+    return clean:find("fluid", 1, true) ~= nil or clean:find("hipheight", 1, true) ~= nil
 end
 
-local flagStatusCache = {}
+local function TrackConn(c)
+    if c then table.insert(_G.ShystxGlobalConns, c) end
+    return c
+end
 
-local function VerifyFlagStatus(flagName)
-    if type(flagName) ~= "string" or type(getfflag) ~= "function" then return false end
-    if flagStatusCache[flagName] ~= nil then return flagStatusCache[flagName] end
-    local clean = CleanFlagName(flagName)
-    local s, r = pcall(function()
-        local val = getfflag(clean)
-        if val == nil then val = getfflag(flagName) end
-        return val ~= nil
+-- Jump Boost Logic (Runs only when _G.ShystxFlagsApplied == true)
+local isArmed, armedExpiration, lastBoostTime = true, math.huge, 0
+local function ToggleBoost()
+    if _G.ShystxFlagsApplied ~= true then return end
+    _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
+    if not _G.ShystxBoostEnabled then isArmed = false end
+end
+
+TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
+    if inp.KeyCode == Enum.KeyCode.DPadUp then
+        ToggleBoost()
+    elseif not gpe and (inp.KeyCode == Enum.KeyCode.LeftControl or inp.KeyCode == Enum.KeyCode.RightControl) then
+        ToggleBoost()
+    end
+end))
+
+-- Tuned downward further for balanced, natural jump trajectory
+local SMOOTH_UPWARD_CURVE = {6.0, 5.0, 4.0, 3.0, 2.0, 1.2, 0.5}
+local function ExecuteBoost()
+    if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
+    local now = os.clock()
+    if not isArmed or (now > armedExpiration) then isArmed = false; return end
+    if now - lastBoostTime < 0.35 then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+    isArmed = false
+    lastBoostTime = now
+    _G.ShystxIsBoosting = true
+    task.spawn(function()
+        for i = 1, #SMOOTH_UPWARD_CURVE do
+            if _G.ShystxCurrentSession ~= thisSession or not root or not root.Parent or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true then break end
+            local cur = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
+            local bVal = SMOOTH_UPWARD_CURVE[i]
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(cur.X, cur.Y + bVal, cur.Z) end)
+            pcall(function() root.Velocity = Vector3.new(cur.X, cur.Y + bVal, cur.Z) end)
+            RunService.Heartbeat:Wait()
+        end
+        _G.ShystxIsBoosting = false
     end)
-    local status = (s and r) or false
-    flagStatusCache[flagName] = status
-    return status
 end
 
-local function AutoRepairJSON(rawText)
-    if type(rawText) ~= "string" or (rawText:gsub(" ", ""):gsub("\t", "") == "") then return {}, "{}" end
-    local text = rawText:gsub("//[^\r\n]*", ""):gsub("/%*.-%*/", ""):gsub(",%s*}", "}"):gsub(",%s*]", "]")
-    local ok, parsed = pcall(function() return HttpService:JSONDecode(text) end)
-    if ok and type(parsed) == "table" then
-        local normalized = {}
-        for k, v in pairs(parsed) do
-            local cleanK = tostring(k):gsub('^%s*(.-)%s*$', '%1')
-            if cleanK ~= "" then
-                if type(v) == "string" then
-                    local low = v:lower():gsub('^%s*(.-)%s*$', '%1')
-                    if low == "true" then normalized[cleanK] = true
-                    elseif low == "false" then normalized[cleanK] = false
-                    elseif tonumber(v) ~= nil then normalized[cleanK] = tonumber(v)
-                    else normalized[cleanK] = v end
-                else
-                    normalized[cleanK] = v
-                end
-            end
-        end
-        return normalized, HttpService:JSONEncode(normalized)
+local function TryTriggerBoost()
+    if isArmed and _G.ShystxBoostEnabled == true and _G.ShystxFlagsApplied == true then
+        ExecuteBoost()
     end
+end
 
-    local result = {}
-    for line in rawText:gmatch("[^\r\n]+") do
-        local trimmed = line:gsub('^%s*(.-)%s*$', '%1')
-        if trimmed ~= "" and not trimmed:match("^//") and not trimmed:match("^#") then
-            local k, v = trimmed:match('^["\']?([%w_%.%-]+)["\']?%s*[:=]%s*(.-)%s*,?$')
-            if k and v then
-                v = v:gsub('^%s*(.-)%s*$', '%1')
-                if v:sub(1,1) == '"' and v:sub(-1) == '"' then v = v:sub(2, -2)
-                elseif v:sub(1,1) == "'" and v:sub(-1) == "'" then v = v:sub(2, -2) end
-                v = v:gsub('^%s*(.-)%s*$', '%1')
+local charConns = {}
+local function SetupCharacter(char)
+    if not char or _G.ShystxCurrentSession ~= thisSession then return end
+    for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
+    charConns = {}
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+    local sc = hum.StateChanged:Connect(function(_, st)
+        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then
+            TryTriggerBoost()
+        elseif (st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.Running) then
+            isArmed = true
+            _G.ShystxIsBoosting = false
+        end
+    end)
+    table.insert(charConns, sc); TrackConn(sc)
+    local jc = hum.Jumping:Connect(function(act)
+        if act then TryTriggerBoost() end
+    end)
+    table.insert(charConns, jc); TrackConn(jc)
+end
 
-                local num = tonumber(v)
-                if num ~= nil then result[k] = num
-                elseif v:lower() == "true" then result[k] = true
-                elseif v:lower() == "false" then result[k] = false
-                else result[k] = v end
-            end
+TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
+if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
+TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
+
+-- Keybind Masking (Strictly preserves CoreGui.RobloxGui to never break Escape Menu)
+local monitoredLabels = {}
+local lastLegitText = {}
+local function isMaskedText(text)
+    if type(text) ~= "string" then return false end
+    if text:find("[dD]%-?[pP][aA][dD]%s*[_%-]?%s*[uU][pP]") then return true end
+    if text:find("[lL]eft%s*[cC]ontrol") or text:find("[rR]ight%s*[cC]ontrol") or text:find("[lL]eft%s*[cC]trl") or text:find("[rR]ight%s*[cC]trl") then return true end
+    return false
+end
+
+local function cleanText(label)
+    local text = label.Text
+    if isMaskedText(text) then
+        label.Text = lastLegitText[label] or "Press any key or controller button..."
+    else
+        lastLegitText[label] = text
+    end
+end
+
+local function trackLabel(desc)
+    if desc:IsA("TextLabel") and desc.Name ~= "Title" then
+        local isRobloxMenu = false
+        pcall(function()
+            local rGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+            if rGui and desc:IsDescendantOf(rGui) then isRobloxMenu = true end
+        end)
+        if isRobloxMenu then return end
+        monitoredLabels[desc] = true
+        lastLegitText[desc] = desc.Text
+        desc:GetPropertyChangedSignal("Text"):Connect(function() cleanText(desc) end)
+        cleanText(desc)
+    end
+end
+
+local function watchContainer(container)
+    if not container then return end
+    for _, desc in ipairs(container:GetDescendants()) do trackLabel(desc) end
+    container.DescendantAdded:Connect(trackLabel)
+    container.DescendantRemoving:Connect(function(desc)
+        monitoredLabels[desc] = nil
+        lastLegitText[desc] = nil
+    end)
+end
+
+task.spawn(function()
+    pcall(function() watchContainer(LocalPlayer:WaitForChild("PlayerGui", 5)) end)
+    pcall(function()
+        if typeof(gethui) == "function" then watchContainer(gethui()) end
+    end)
+end)
+
+TrackConn(RunService.RenderStepped:Connect(function()
+    for label in pairs(monitoredLabels) do
+        if label and label.Parent then
+            cleanText(label)
+        else
+            monitoredLabels[label] = nil
+            lastLegitText[label] = nil
         end
     end
-    return result, HttpService:JSONEncode(result)
-end
+end))
 
-local function TrySetFlag(flagName, val)
-    if type(setfflag) ~= "function" then return false end
-    local clean = CleanFlagName(flagName)
-    local ok = pcall(function() setfflag(flagName, val) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(flagName, tostring(val)) end)
-    if ok then return true end
-    ok = pcall(function() setfflag(clean, val) end)
-    if ok then return true end
-    return pcall(function() setfflag(clean, tostring(val)) end)
-end
-
+-- GUI Setup & Design Theme
 local C = {
-    Bg = Color3.fromRGB(11, 13, 18),
-    TBar = Color3.fromRGB(16, 19, 27),
-    Red = Color3.fromRGB(244, 63, 94),
-    DarkRed = Color3.fromRGB(190, 18, 60),
-    Blue = Color3.fromRGB(59, 130, 246),
-    DarkBlue = Color3.fromRGB(29, 78, 216),
-    PanelBg = Color3.fromRGB(18, 22, 31),
-    CardBg = Color3.fromRGB(14, 17, 24),
-    EditorBg = Color3.fromRGB(9, 11, 15),
-    TxtDark = Color3.fromRGB(248, 250, 252),
-    TxtGray = Color3.fromRGB(148, 163, 184),
-    TxtMuted = Color3.fromRGB(100, 116, 139),
-    TxtWhite = Color3.fromRGB(255, 255, 255),
-    BtnBg = Color3.fromRGB(22, 28, 38),
-    BtnHover = Color3.fromRGB(33, 41, 58),
-    Border = Color3.fromRGB(30, 38, 52),
-    BorderLight = Color3.fromRGB(45, 55, 72),
-    Green = Color3.fromRGB(16, 185, 129),
-    DarkGreen = Color3.fromRGB(5, 150, 105),
-    Yellow = Color3.fromRGB(234, 179, 8)
+    Bg = Color3.fromRGB(15, 17, 23),
+    TopBar = Color3.fromRGB(22, 25, 35),
+    Border = Color3.fromRGB(38, 43, 60),
+    BorderHover = Color3.fromRGB(58, 65, 90),
+    Cyan = Color3.fromRGB(0, 225, 255),
+    CyanHover = Color3.fromRGB(60, 235, 255),
+    Green = Color3.fromRGB(0, 230, 118),
+    GreenHover = Color3.fromRGB(40, 245, 140),
+    Red = Color3.fromRGB(255, 75, 75),
+    RedHover = Color3.fromRGB(255, 100, 100),
+    RowBg = Color3.fromRGB(20, 23, 32),
+    RowHover = Color3.fromRGB(27, 32, 45),
+    ListBg = Color3.fromRGB(11, 13, 18),
+    BtnBg = Color3.fromRGB(26, 30, 42),
+    BtnHover = Color3.fromRGB(38, 44, 62),
+    TextWhite = Color3.fromRGB(240, 243, 246),
+    TextDim = Color3.fromRGB(130, 138, 155),
+    TextMuted = Color3.fromRGB(80, 88, 105),
+    TabActive = Color3.fromRGB(22, 27, 38)
 }
 
-local function New(cls, props, p, rad)
-    local obj = Instance.new(cls)
-    for k, v in pairs(props or {}) do obj[k] = v end
-    if rad then Instance.new("UICorner", obj).CornerRadius = UDim.new(0, rad) end
-    if p then obj.Parent = p end
-    return obj
-end
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FastFlagManagerGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-local function Tween(instance, props, dur, style, dir)
-    local tw = TweenService:Create(
-        instance,
-        TweenInfo.new(dur or 0.22, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
-        props
-    )
+pcall(function()
+    if type(syn) == "table" and syn.protect_gui then syn.protect_gui(ScreenGui)
+    elseif type(gethui) == "function" then ScreenGui.Parent = gethui()
+    else ScreenGui.Parent = game:GetService("CoreGui") end
+end)
+if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local UiScale = Instance.new("UIScale", ScreenGui)
+local function GetTargetScale()
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+    return math.clamp(math.min(vp.X / 1280, vp.Y / 720), 0.75, 1.25)
+end
+local function UpdateScale()
+    UiScale.Scale = GetTargetScale()
+end
+UpdateScale()
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(UpdateScale)
+
+-- Unified Smooth Animation Helper
+local function Tween(obj, props, dur, style, dir)
+    local info = TweenInfo.new(dur or 0.15, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
+    local tw = TweenService:Create(obj, info, props)
     tw:Play()
     return tw
 end
 
--- Master ScreenGui & Main Frame
-local ScreenGui = New("ScreenGui", {Name = "yblazy_ffm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, parentGui)
-local Main = New("Frame", {
-    Size = UDim2.new(0, 610, 0, 420),
-    Position = UDim2.new(0.5, 0, 0.5, 0),
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = C.Bg,
-    BorderSizePixel = 0,
-    ClipsDescendants = true
-}, ScreenGui, 12)
-
-New("UIStroke", {Thickness = 1.6, Color = C.BorderLight}, Main)
-local UiScale = New("UIScale", {Scale = 0.01}, Main)
-Tween(UiScale, {Scale = 0.78}, 0.35, Enum.EasingStyle.Back)
-
--- Floating Particle Canvas
-local ParticleCanvas = New("Frame", {
-    Size = UDim2.new(1, 0, 1, 0),
-    BackgroundTransparency = 1,
-    ClipsDescendants = true,
-    ZIndex = 1
-}, Main)
-
-local particles = {}
-local PARTICLE_COUNT = 24
-for i = 1, PARTICLE_COUNT do
-    local sz = math.random(2, 4)
-    local isBlue = (i % 2 == 0)
-    local p = New("Frame", {
-        Size = UDim2.new(0, sz, 0, sz),
-        Position = UDim2.new(math.random(), 0, math.random(), 0),
-        BackgroundColor3 = isBlue and C.Blue or C.Red,
-        BackgroundTransparency = math.random(60, 90) / 100,
-        BorderSizePixel = 0,
-        ZIndex = 1
-    }, ParticleCanvas, 3)
-    table.insert(particles, {
-        inst = p,
-        vx = (math.random(-15, 15) / 100) * 0.35,
-        vy = -(math.random(15, 45) / 100) * 0.35
-    })
+local function Stroke(parent, col)
+    local s = Instance.new("UIStroke", parent)
+    s.Thickness = 1
+    s.Color = col or C.Border
+    return s
 end
 
-local pConn = RunService.RenderStepped:Connect(function(dt)
-    if not Main or not Main.Parent or not Main.Visible then return end
-    for _, pt in ipairs(particles) do
-        local cur = pt.inst.Position
-        local nx = cur.X.Scale + pt.vx * dt
-        local ny = cur.Y.Scale + pt.vy * dt
-        if ny < -0.05 then ny = 1.05 nx = math.random() end
-        if nx < -0.05 then nx = 1.05 elseif nx > 1.05 then nx = -0.05 end
-        pt.inst.Position = UDim2.new(nx, 0, ny, 0)
+-- Ultra-Responsive Click Handler with Debounce Lock
+local function OnClick(btn, fn)
+    local debounce = false
+    local function trigger()
+        if debounce then return end
+        debounce = true
+        task.spawn(function()
+            pcall(fn)
+            task.wait(0.12)
+            debounce = false
+        end)
     end
-end)
-
--- Top Draggable Header
-local TopBar = New("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.TBar, BorderSizePixel = 0, ZIndex = 5}, Main)
-New("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.Border, BorderSizePixel = 0, ZIndex = 6}, TopBar)
-
-local TitleLogo = New("Frame", {Size = UDim2.new(0, 160, 1, 0), Position = UDim2.new(0, 18, 0, 0), BackgroundTransparency = 1, ZIndex = 6}, TopBar)
-New("TextLabel", {Size = UDim2.new(0, 24, 1, 0), Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1, Text = "yb", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Red, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
-New("TextLabel", {Size = UDim2.new(0, 60, 1, 0), Position = UDim2.new(0, 22, 0, 0), BackgroundTransparency = 1, Text = "strap", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.Blue, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
-New("TextLabel", {Size = UDim2.new(0, 60, 1, 0), Position = UDim2.new(0, 68, 0, 0), BackgroundTransparency = 1, Text = "studio", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtMuted, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6}, TitleLogo)
-
-local function MakeHeaderBtn(txt, col, xOff)
-    local B = New("TextButton", {
-        Size = UDim2.new(0, 28, 0, 28),
-        Position = UDim2.new(1, xOff, 0.5, -14),
-        BackgroundColor3 = C.BtnBg,
-        BorderSizePixel = 0,
-        Text = txt,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        TextColor3 = col,
-        ZIndex = 6
-    }, TopBar, 6)
-    B.MouseEnter:Connect(function() Tween(B, {BackgroundColor3 = C.BtnHover}, 0.15) end)
-    B.MouseLeave:Connect(function() Tween(B, {BackgroundColor3 = C.BtnBg}, 0.15) end)
-    return B
+    btn.MouseButton1Click:Connect(trigger)
+    btn.MouseButton1Down:Connect(trigger)
+    if btn.Activated then btn.Activated:Connect(trigger) end
 end
 
-local MinBtn = MakeHeaderBtn("—", C.Blue, -70)
-local ClsBtn = MakeHeaderBtn("✕", C.Red, -36)
+local function Card(parent, size, pos, bg, corner, z)
+    local f = Instance.new("Frame", parent)
+    f.Size = size or UDim2.new(1, 0, 1, 0)
+    f.Position = pos or UDim2.new(0, 0, 0, 0)
+    f.BackgroundColor3 = bg or C.RowBg
+    f.BorderSizePixel = 0
+    f.ZIndex = z or 12
+    if corner and corner > 0 then Instance.new("UICorner", f).CornerRadius = UDim.new(0, corner) end
+    return f
+end
 
--- Navigation Tabs
-local TabBar = New("Frame", {Size = UDim2.new(1, -40, 0, 30), Position = UDim2.new(0, 20, 0, 52), BackgroundTransparency = 1, ZIndex = 5}, Main)
-local TabActiveBtn = New("TextButton", {Size = UDim2.new(0, 120, 1, 0), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Active Flags", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 6}, TabBar, 6)
-local TabSavedBtn = New("TextButton", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(0, 126, 0, 0), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Named Configs", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtGray, ZIndex = 6}, TabBar, 6)
+local function Txt(parent, text, size, pos, col, font, align, z)
+    local l = Instance.new("TextLabel", parent)
+    l.Size = size or UDim2.new(1, 0, 1, 0)
+    l.Position = pos or UDim2.new(0, 0, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = text or ""
+    l.TextColor3 = col or C.TextWhite
+    l.Font = font or Enum.Font.GothamBold
+    l.TextSize = 10
+    l.TextXAlignment = align or Enum.TextXAlignment.Left
+    l.ZIndex = z or 12
+    l.ClipsDescendants = true
+    return l
+end
 
--- Main Lists Containers
-local ActiveContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -170), Position = UDim2.new(0, 20, 0, 88), BackgroundTransparency = 1, ZIndex = 5}, Main)
-local SavedContainer = New("Frame", {Size = UDim2.new(1, -40, 1, -170), Position = UDim2.new(0, 20, 0, 88), BackgroundTransparency = 1, Visible = false, ZIndex = 5}, Main)
+-- Animated Button with Interactive Hover & Press Tweens
+local function Btn(parent, text, size, pos, bg, col, fn, z)
+    local b = Instance.new("TextButton", parent)
+    b.Size = size or UDim2.new(0, 80, 0, 30)
+    b.Position = pos or UDim2.new(0, 0, 0, 0)
+    b.BackgroundColor3 = bg or C.BtnBg
+    b.Text = text or ""
+    b.TextColor3 = col or C.TextWhite
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 10
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.ZIndex = z or 12
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    local st = Stroke(b, bg == C.Cyan and C.Cyan or C.Border)
+    
+    local isPrimary = (bg == C.Cyan)
+    local isDanger = (col == C.Red)
+    local defBg = bg or C.BtnBg
+    local hovBg = isPrimary and C.CyanHover or (isDanger and Color3.fromRGB(45, 24, 28) or C.BtnHover)
+    local hovStroke = isPrimary and Color3.fromRGB(120, 245, 255) or (isDanger and C.RedHover or C.BorderHover)
 
-local FlagScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollBarImageColor3 = C.Border, ZIndex = 5}, ActiveContainer, 8)
-local FLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, FlagScroll)
-New("UIPadding", {PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, FlagScroll)
-
-local ConfigScroll = New("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollBarImageColor3 = C.Border, ZIndex = 5}, SavedContainer, 8)
-local CLayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, ConfigScroll)
-New("UIPadding", {PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, ConfigScroll)
-
--- Global Toast Notification Engine
-local function ShowToast(msg, col)
-    local toast = New("Frame", {
-        Size = UDim2.new(0, 280, 0, 36),
-        Position = UDim2.new(0.5, 0, 1, 20),
-        AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = C.TBar,
-        BorderSizePixel = 0,
-        ZIndex = 80
-    }, Main, 8)
-    New("UIStroke", {Thickness = 1.4, Color = col or C.Blue}, toast)
-    New("TextLabel", {
-        Size = UDim2.new(1, -16, 1, 0),
-        Position = UDim2.new(0, 8, 0, 0),
-        BackgroundTransparency = 1,
-        Text = msg,
-        Font = Enum.Font.GothamBold,
-        TextSize = 11,
-        TextColor3 = C.TxtWhite,
-        ZIndex = 81
-    }, toast)
-
-    Tween(toast, {Position = UDim2.new(0.5, 0, 1, -16)}, 0.25, Enum.EasingStyle.Quart)
-    task.delay(1.75, function()
-        local tw = Tween(toast, {Position = UDim2.new(0.5, 0, 1, 40)}, 0.25, Enum.EasingStyle.Quart)
-        tw.Completed:Connect(function() pcall(function() toast:Destroy() end) end)
+    b.MouseEnter:Connect(function()
+        Tween(b, {BackgroundColor3 = hovBg}, 0.12)
+        Tween(st, {Color = hovStroke}, 0.12)
     end)
+    b.MouseLeave:Connect(function()
+        Tween(b, {BackgroundColor3 = defBg}, 0.12)
+        Tween(st, {Color = isPrimary and C.Cyan or C.Border}, 0.12)
+    end)
+    b.MouseButton1Down:Connect(function()
+        Tween(b, {Size = UDim2.new(size.X.Scale, size.X.Offset - 2, size.Y.Scale, size.Y.Offset - 2)}, 0.08)
+    end)
+    b.MouseButton1Up:Connect(function()
+        Tween(b, {Size = size}, 0.08)
+    end)
+
+    if fn then OnClick(b, fn) end
+    return b
 end
 
--- Refresh UI Lists
-local function RefreshLists()
-    for _, x in ipairs(FlagScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
-    for _, x in ipairs(ConfigScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
-
-    local cnt = SafeReadFile(F_PATH)
-    local dec = AutoRepairJSON(cnt)
-    local flagCount = 0
-
-    if type(dec) == "table" then
-        for k, v in pairs(dec) do
-            if not IsHiddenFlag(k) then
-                flagCount = flagCount + 1
-                pcall(function()
-                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, FlagScroll, 6)
-                    local statusDot = New("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 10, 0.5, -3), BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red, BorderSizePixel = 0, ZIndex = 7}, row, 3)
-
-                    local textStr = k .. " = " .. tostring(v)
-                    local flagLabel = New("TextLabel", {
-                        Size = UDim2.new(1, -170, 1, 0),
-                        Position = UDim2.new(0, 24, 0, 0),
-                        BackgroundTransparency = 1,
-                        Text = textStr,
-                        Font = Enum.Font.Code,
-                        TextSize = 11,
-                        TextColor3 = C.TxtDark,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        ClipsDescendants = true,
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                        ZIndex = 7
-                    }, row)
-
-                    local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
-                    local setBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-                    local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-
-                    setBtn.MouseEnter:Connect(function() Tween(setBtn, {BackgroundColor3 = C.DarkGreen}, 0.15) end)
-                    setBtn.MouseLeave:Connect(function() Tween(setBtn, {BackgroundColor3 = C.Green}, 0.15) end)
-                    delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
-                    delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
-
-                    setBtn.MouseButton1Click:Connect(function()
-                        TrySetFlag(k, v)
-                        flagStatusCache[k] = true
-                        setBtn.Text = "OK!"
-                        setBtn.BackgroundColor3 = C.DarkGreen
-                        ShowToast("Applied " .. k, C.Green)
-                        task.delay(0.9, function()
-                            pcall(function()
-                                setBtn.Text = "SET"
-                                setBtn.BackgroundColor3 = C.Green
-                                statusDot.BackgroundColor3 = VerifyFlagStatus(k) and C.Green or C.Red
-                            end)
-                        end)
-                    end)
-
-                    delBtn.MouseButton1Click:Connect(function()
-                        dec[k] = nil
-                        flagStatusCache[k] = nil
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                        row:Destroy()
-                        ShowToast("Deleted " .. k, C.Red)
-                        RefreshLists()
-                    end)
-                end)
-            end
-        end
-    end
-    TabActiveBtn.Text = "Active Flags (" .. tostring(flagCount) .. ")"
-
-    -- Render Saved Named Configs
-    local cfgCnt = SafeReadFile(CONFIGS_PATH)
-    local ok, savedConfigs = pcall(function() return HttpService:JSONDecode(cfgCnt) end)
-    if (not ok or type(savedConfigs) ~= "table") and _G.ShystxSavedConfigs then
-        savedConfigs = _G.ShystxSavedConfigs
-    end
-
-    local cfgTotal = 0
-    if type(savedConfigs) == "table" then
-        for cfgName, flagsObj in pairs(savedConfigs) do
-            if type(flagsObj) == "table" then
-                cfgTotal = cfgTotal + 1
-                local count = 0
-                for fName in pairs(flagsObj) do
-                    if not IsHiddenFlag(fName) then count = count + 1 end
-                end
-
-                pcall(function()
-                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 6}, ConfigScroll, 6)
-                    New("TextLabel", {
-                        Size = UDim2.new(1, -170, 1, 0),
-                        Position = UDim2.new(0, 14, 0, 0),
-                        BackgroundTransparency = 1,
-                        Text = cfgName .. " (" .. tostring(count) .. " flags)",
-                        Font = Enum.Font.GothamBold,
-                        TextSize = 11,
-                        TextColor3 = C.TxtDark,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        ClipsDescendants = true,
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                        ZIndex = 7
-                    }, row)
-
-                    local dock = New("Frame", {Size = UDim2.new(0, 130, 1, 0), Position = UDim2.new(1, -134, 0, 0), BackgroundTransparency = 1, ZIndex = 7}, row)
-                    local loadBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 0, 0.5, -12), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Load", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-                    local delBtn = New("TextButton", {Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(0, 66, 0.5, -12), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 8}, dock, 4)
-
-                    loadBtn.MouseEnter:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.DarkBlue}, 0.15) end)
-                    loadBtn.MouseLeave:Connect(function() Tween(loadBtn, {BackgroundColor3 = C.Blue}, 0.15) end)
-                    delBtn.MouseEnter:Connect(function() Tween(delBtn, {BackgroundColor3 = C.DarkRed}, 0.15) end)
-                    delBtn.MouseLeave:Connect(function() Tween(delBtn, {BackgroundColor3 = C.Red}, 0.15) end)
-
-                    loadBtn.MouseButton1Click:Connect(function()
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
-                        table.clear(flagStatusCache)
-                        ShowToast("Loaded config: " .. cfgName, C.Blue)
-                        RefreshLists()
-                    end)
-
-                    delBtn.MouseButton1Click:Connect(function()
-                        savedConfigs[cfgName] = nil
-                        _G.ShystxSavedConfigs[cfgName] = nil
-                        SafeWriteFile(CONFIGS_PATH, HttpService:JSONEncode(savedConfigs))
-                        row:Destroy()
-                        ShowToast("Deleted config: " .. cfgName, C.Red)
-                        RefreshLists()
-                    end)
-                end)
-            end
-        end
-    end
-    TabSavedBtn.Text = "Named Configs (" .. tostring(cfgTotal) .. ")"
-
-    FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 12)
-    ConfigScroll.CanvasSize = UDim2.new(0, 0, 0, CLayout.AbsoluteContentSize.Y + 12)
+local function Box(parent, ph, size, pos, z)
+    local b = Instance.new("TextBox", parent)
+    b.Size = size or UDim2.new(1, -20, 0, 30)
+    b.Position = pos or UDim2.new(0, 10, 0, 10)
+    b.BackgroundColor3 = C.ListBg
+    b.PlaceholderText = ph or ""
+    b.Font = Enum.Font.Code
+    b.TextSize = 11
+    b.TextColor3 = C.TextWhite
+    b.ClearTextOnFocus = false
+    b.ZIndex = z or 32
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    local st = Stroke(b, C.Border)
+    b.Focused:Connect(function() Tween(st, {Color = C.Cyan}, 0.15) end)
+    b.FocusLost:Connect(function() Tween(st, {Color = C.Border}, 0.15) end)
+    return b
 end
 
-FLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() FlagScroll.CanvasSize = UDim2.new(0, 0, 0, FLayout.AbsoluteContentSize.Y + 12) end)
-CLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() ConfigScroll.CanvasSize = UDim2.new(0, 0, 0, CLayout.AbsoluteContentSize.Y + 12) end)
+-- Main Window with Opening Animation
+local Main = Card(ScreenGui, UDim2.new(0, 480, 0, 360), UDim2.new(0.5, -240, 0.5, -180), C.Bg, 8, 10)
+Main.ClipsDescendants = true
+Stroke(Main, C.Border)
 
--- Tab Switch Events
-TabActiveBtn.MouseButton1Click:Connect(function()
-    Tween(TabActiveBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
-    Tween(TabSavedBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
-    ActiveContainer.Visible, SavedContainer.Visible = true, false
-    RefreshLists()
+-- Smooth Window Entry Pop-In
+UiScale.Scale = 0.01
+Tween(UiScale, {Scale = GetTargetScale()}, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+-- Top Bar
+local TopBar = Card(Main, UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 0), C.TopBar, 0, 11)
+Stroke(TopBar, C.Border)
+Txt(TopBar, "FASTFLAG MANAGER", UDim2.new(1, -80, 1, 0), UDim2.new(0, 12, 0, 0), C.Cyan, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 12)
+local ClsBtn = Btn(TopBar, "X", UDim2.new(0, 24, 0, 24), UDim2.new(1, -28, 0.5, -12), C.BtnBg, C.TextDim, nil, 12)
+local MinBtn = Btn(TopBar, "-", UDim2.new(0, 24, 0, 24), UDim2.new(1, -56, 0.5, -12), C.BtnBg, C.TextDim, nil, 12)
+
+-- Animated Close Button Special Hover
+ClsBtn.MouseEnter:Connect(function() Tween(ClsBtn, {BackgroundColor3 = Color3.fromRGB(200, 45, 55), TextColor3 = C.TextWhite}, 0.12) end)
+ClsBtn.MouseLeave:Connect(function() Tween(ClsBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TextDim}, 0.12) end)
+
+-- Tabs
+local TabBar = Card(Main, UDim2.new(1, -24, 0, 30), UDim2.new(0, 12, 0, 44), C.ListBg, 4, 11)
+local ActiveTabBtn = Btn(TabBar, "ACTIVE FLAGS (0)", UDim2.new(0.5, 0, 1, 0), UDim2.new(0, 0, 0, 0), C.TabActive, C.Cyan, nil, 12)
+local SavedTabBtn = Btn(TabBar, "SAVED CONFIGS (0)", UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), Color3.fromRGB(0,0,0), C.TextDim, nil, 12)
+SavedTabBtn.BackgroundTransparency = 1
+
+local ActiveView = Instance.new("ScrollingFrame", Main)
+ActiveView.Size = UDim2.new(1, -24, 0, 220)
+ActiveView.Position = UDim2.new(0, 12, 0, 80)
+ActiveView.BackgroundColor3 = C.ListBg
+ActiveView.BorderSizePixel = 0
+ActiveView.ScrollBarThickness = 4
+ActiveView.ScrollBarImageColor3 = C.Border
+ActiveView.ZIndex = 11
+Instance.new("UICorner", ActiveView).CornerRadius = UDim.new(0, 4)
+
+local SavedView = Instance.new("ScrollingFrame", Main)
+SavedView.Size = UDim2.new(1, -24, 0, 220)
+SavedView.Position = UDim2.new(0, 12, 0, 80)
+SavedView.BackgroundColor3 = C.ListBg
+SavedView.BorderSizePixel = 0
+SavedView.ScrollBarThickness = 4
+SavedView.ScrollBarImageColor3 = C.Border
+SavedView.Visible = false
+SavedView.ZIndex = 11
+Instance.new("UICorner", SavedView).CornerRadius = UDim.new(0, 4)
+
+local ActiveLayout = Instance.new("UIListLayout", ActiveView)
+ActiveLayout.Padding = UDim.new(0, 4)
+
+local SavedLayout = Instance.new("UIListLayout", SavedView)
+SavedLayout.Padding = UDim.new(0, 4)
+
+ActiveLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    ActiveView.CanvasSize = UDim2.new(0, 0, 0, ActiveLayout.AbsoluteContentSize.Y + 8)
+end)
+SavedLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    SavedView.CanvasSize = UDim2.new(0, 0, 0, SavedLayout.AbsoluteContentSize.Y + 8)
 end)
 
-TabSavedBtn.MouseButton1Click:Connect(function()
-    Tween(TabSavedBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
-    Tween(TabActiveBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
-    ActiveContainer.Visible, SavedContainer.Visible = false, true
-    RefreshLists()
-end)
-
--- Bottom Navigation Actions Bar
-local BotBar = New("Frame", {Size = UDim2.new(1, -40, 0, 36), Position = UDim2.new(0, 20, 1, -48), BackgroundTransparency = 1, ZIndex = 5}, Main)
-local BL = New("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6)}, BotBar)
-
-local function MakeActionBtn(txt, w, col, txtCol)
-    local B = New("TextButton", {
-        Size = UDim2.new(0, w, 1, 0),
-        BackgroundColor3 = col or C.BtnBg,
-        BorderSizePixel = 0,
-        Text = txt,
-        Font = Enum.Font.GothamBold,
-        TextSize = 11,
-        TextColor3 = txtCol or (col and C.TxtWhite or C.TxtDark),
-        ZIndex = 6
-    }, BotBar, 6)
-    B.MouseEnter:Connect(function() Tween(B, {BackgroundColor3 = col and C.DarkBlue or C.BtnHover}, 0.15) end)
-    B.MouseLeave:Connect(function() Tween(B, {BackgroundColor3 = col or C.BtnBg}, 0.15) end)
-    return B
+-- Smooth Animated Tab Switching
+local function SwitchTab(tab)
+    if tab == "Active" then
+        ActiveView.Visible = true
+        SavedView.Visible = false
+        Tween(ActiveTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.15)
+        Tween(SavedTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.15)
+    else
+        ActiveView.Visible = false
+        SavedView.Visible = true
+        Tween(SavedTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.15)
+        Tween(ActiveTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.15)
+    end
 end
+OnClick(ActiveTabBtn, function() SwitchTab("Active") end)
+OnClick(SavedTabBtn, function() SwitchTab("Saved") end)
 
-local InjectBtn = MakeActionBtn("Apply Flags", 92, C.Blue)
-local SaveConfigBtn = MakeActionBtn("Save Config", 86, C.Green)
-local EditFlagsBtn = MakeActionBtn("Edit Flags", 78, nil)
-local ImportBtn = MakeActionBtn("Import JSON", 84, nil)
-local CopyBtn = MakeActionBtn("Copy JSON", 76, nil)
-local ClearBtn = MakeActionBtn("Clear", 52, nil, C.Red)
-local WipeBtn = MakeActionBtn("Close", 56, C.DarkRed)
+-- Bottom Bar Actions
+local BottomBar = Instance.new("Frame", Main)
+BottomBar.Size = UDim2.new(1, -24, 0, 40)
+BottomBar.Position = UDim2.new(0, 12, 1, -48)
+BottomBar.BackgroundTransparency = 1
+BottomBar.ZIndex = 11
 
--- Modal Constructor
-local function MakeModal(w, h)
-    local panel = New("Frame", {
-        Size = UDim2.new(0, w, 0, h),
-        Position = UDim2.new(0.5, 0, 0.5, 0),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = C.PanelBg,
-        BorderSizePixel = 0,
-        Visible = false,
-        ZIndex = 20
-    }, Main, 10)
-    New("UIStroke", {Thickness = 1.4, Color = C.BorderLight}, panel)
+local BottomLayout = Instance.new("UIListLayout", BottomBar)
+BottomLayout.FillDirection = Enum.FillDirection.Horizontal
+BottomLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+BottomLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+BottomLayout.Padding = UDim.new(0, 6)
+
+local ImportBtn = Btn(BottomBar, "Import", UDim2.new(0, 72, 0, 32), nil, C.BtnBg, C.TextWhite, nil, 12)
+local SaveConfigBtn = Btn(BottomBar, "Save Config", UDim2.new(0, 86, 0, 32), nil, C.BtnBg, C.TextWhite, nil, 12)
+local EditFlagsBtn = Btn(BottomBar, "Edit Flags", UDim2.new(0, 80, 0, 32), nil, C.BtnBg, C.TextWhite, nil, 12)
+local ClearBtn = Btn(BottomBar, "Clear", UDim2.new(0, 64, 0, 32), nil, C.BtnBg, C.TextWhite, nil, 12)
+local InjectBtn = Btn(BottomBar, "Inject", UDim2.new(0, 80, 0, 32), nil, C.Cyan, Color3.fromRGB(10, 15, 20), nil, 12)
+
+-- Animated Modals Builder with Pop-In and Dismiss Tweens
+local function MakeModal(w, h, titleText, closeFn)
+    local panel = Card(ScreenGui, UDim2.new(0, w, 0, h), UDim2.new(0.5, -w/2, 0.5, -h/2 + 10), C.Bg, 8, 30)
+    panel.Visible = false
+    local st = Stroke(panel, C.Border)
+    local head = Card(panel, UDim2.new(1, 0, 0, 34), UDim2.new(0, 0, 0, 0), C.TopBar, 0, 31)
+    Stroke(head, C.Border)
+    Txt(head, titleText, UDim2.new(1, -40, 1, 0), UDim2.new(0, 10, 0, 0), C.Cyan, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 32)
+    local closeBtn = Btn(head, "X", UDim2.new(0, 22, 0, 22), UDim2.new(1, -28, 0.5, -11), C.BtnBg, C.TextDim, function() closeFn(panel) end, 32)
+    closeBtn.MouseEnter:Connect(function() Tween(closeBtn, {BackgroundColor3 = Color3.fromRGB(200, 45, 55), TextColor3 = C.TextWhite}, 0.12) end)
+    closeBtn.MouseLeave:Connect(function() Tween(closeBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TextDim}, 0.12) end)
     return panel
 end
 
--- Save Config Modal (Rock-Solid Multi-Tier Storage)
-local SaveConfigPanel = MakeModal(390, 150)
-New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 12), BackgroundTransparency = 1, Text = "Save Active Flags as Config", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, SaveConfigPanel)
-local ConfigNameBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 34), Position = UDim2.new(0, 16, 0, 44), BackgroundColor3 = C.CardBg, PlaceholderText = "Enter config preset name...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, ZIndex = 21}, SaveConfigPanel, 6)
-New("UIStroke", {Thickness = 1, Color = C.Border}, ConfigNameBox)
+local function OpenModalAnimated(p, w, h)
+    p.Position = UDim2.new(0.5, -w/2, 0.5, -h/2 + 12)
+    p.Visible = true
+    Tween(p, {Position = UDim2.new(0.5, -w/2, 0.5, -h/2)}, 0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+end
 
-local CfgCancelBtn = New("TextButton", {Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -182, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, SaveConfigPanel, 6)
-local CfgSaveBtn = New("TextButton", {Size = UDim2.new(0, 92, 0, 28), Position = UDim2.new(1, -96, 1, -38), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "Save Preset", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, SaveConfigPanel, 6)
+local function CloseModalAnimated(p, w, h)
+    local tw = Tween(p, {Position = UDim2.new(0.5, -w/2, 0.5, -h/2 + 12)}, 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    tw.Completed:Connect(function() p.Visible = false end)
+end
 
-SaveConfigBtn.MouseButton1Click:Connect(function()
-    EditPanel.Visible, ImportPanel.Visible = false, false
-    ConfigNameBox.Text = ""
-    SaveConfigPanel.Visible = true
-    ConfigNameBox:CaptureFocus()
+-- Import Modal
+local ImportPanel = MakeModal(440, 280, "Import FastFlags (JSON or Raw Text)", function(p) CloseModalAnimated(p, 440, 280) end)
+local ImportBox = Box(ImportPanel, "Paste JSON or FlagKey:Value pairs here...", UDim2.new(1, -20, 0, 175), UDim2.new(0, 10, 0, 44), 32)
+ImportBox.MultiLine = true
+ImportBox.TextXAlignment = Enum.TextXAlignment.Left
+ImportBox.TextYAlignment = Enum.TextYAlignment.Top
+local PasteClipboardBtn = Btn(ImportPanel, "Paste Clipboard", UDim2.new(0, 120, 0, 30), UDim2.new(0, 10, 1, -40), C.BtnBg, C.TextWhite, nil, 32)
+local ApplyImportBtn = Btn(ImportPanel, "Apply Flags", UDim2.new(0, 100, 0, 30), UDim2.new(1, -110, 1, -40), C.Cyan, Color3.fromRGB(10, 15, 20), nil, 32)
+
+-- Save Config Modal
+local SaveConfigPanel = MakeModal(380, 150, "Save Active Config", function(p) CloseModalAnimated(p, 380, 150) end)
+local CfgNameBox = Box(SaveConfigPanel, "Config name (e.g. MySetup)", UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 0, 50), 32)
+local CancelSaveBtn = Btn(SaveConfigPanel, "Cancel", UDim2.new(0, 80, 0, 28), UDim2.new(1, -180, 1, -38), C.BtnBg, C.TextDim, function() CloseModalAnimated(SaveConfigPanel, 380, 150) end, 32)
+local ConfirmSaveBtn = Btn(SaveConfigPanel, "Save", UDim2.new(0, 80, 0, 28), UDim2.new(1, -90, 1, -38), C.Cyan, Color3.fromRGB(10, 15, 20), nil, 32)
+
+-- Live Edit Modal
+local EditPanel = MakeModal(480, 340, "Live Flag Value Editor", function(p) CloseModalAnimated(p, 480, 340) end)
+local EditSearchBox = Box(EditPanel, "Search active flags...", UDim2.new(1, -20, 0, 28), UDim2.new(0, 10, 0, 42), 32)
+local EditScroll = Instance.new("ScrollingFrame", EditPanel)
+EditScroll.Size = UDim2.new(1, -20, 0, 240)
+EditScroll.Position = UDim2.new(0, 10, 0, 78)
+EditScroll.BackgroundColor3 = C.ListBg
+EditScroll.BorderSizePixel = 0
+EditScroll.ScrollBarThickness = 4
+EditScroll.ScrollBarImageColor3 = C.Border
+EditScroll.ZIndex = 32
+Instance.new("UICorner", EditScroll).CornerRadius = UDim.new(0, 4)
+
+local EditLayout = Instance.new("UIListLayout", EditScroll)
+EditLayout.Padding = UDim.new(0, 4)
+EditLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    EditScroll.CanvasSize = UDim2.new(0, 0, 0, EditLayout.AbsoluteContentSize.Y + 8)
 end)
-CfgCancelBtn.MouseButton1Click:Connect(function()
-    pcall(function()
-        local focused = UserInputService:GetFocusedTextBox()
-        if focused then focused:ReleaseFocus() end
+
+-- Animated Dynamic Expanding Toast Notification
+local function ShowToast(msg, color)
+    local tCol = color or C.Cyan
+    local t = Card(ScreenGui, UDim2.new(0, 0, 0, 28), UDim2.new(0.5, 0, 1, -85), C.TopBar, 6, 50)
+    t.ClipsDescendants = true
+    local st = Stroke(t, tCol)
+    local l = Txt(t, msg, UDim2.new(1, -16, 1, 0), UDim2.new(0, 8, 0, 0), tCol, Enum.Font.GothamBold, Enum.TextXAlignment.Center, 51)
+    
+    local targetW = math.clamp(l.TextBounds.X + 32, 160, 380)
+    Tween(t, {Size = UDim2.new(0, targetW, 0, 28), Position = UDim2.new(0.5, -targetW/2, 1, -85)}, 0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    
+    task.delay(2.2, function()
+        local tw = Tween(t, {Size = UDim2.new(0, 0, 0, 28), Position = UDim2.new(0.5, 0, 1, -85)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        tw.Completed:Connect(function() t:Destroy() end)
     end)
-    SaveConfigPanel.Visible = false
-end)
+end
 
-CfgSaveBtn.MouseButton1Click:Connect(function()
-    local name = ConfigNameBox.Text:gsub('^%s*(.-)%s*$', '%1')
-    if name == "" then
-        ShowToast("Please enter a valid config name", C.Red)
-        return
-    end
+-- Refresh Lists with Animated Row Transitions
+local isRefreshing = false
+local function RefreshLists()
+    if isRefreshing then return end
+    isRefreshing = true
+    pcall(function()
+        for _, c in ipairs(ActiveView:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
+        for _, c in ipairs(SavedView:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
 
-    local activeFlags = AutoRepairJSON(SafeReadFile(F_PATH))
-    local count = 0
-    if type(activeFlags) == "table" then
-        for k in pairs(activeFlags) do
-            if not IsHiddenFlag(k) then count = count + 1 end
+        local rawActive = SafeReadFile(F_PATH)
+        local activeDict = AutoRepairJSON(rawActive)
+        local sortedKeys = {}
+        for k in pairs(activeDict) do
+            if not IsHiddenFlag(k) then table.insert(sortedKeys, k) end
+        end
+        table.sort(sortedKeys)
+
+        ActiveTabBtn.Text = "ACTIVE FLAGS (" .. tostring(#sortedKeys) .. ")"
+
+        for _, k in ipairs(sortedKeys) do
+            local v = activeDict[k]
+            local valStr = tostring(v)
+            local isTrue = (valStr:lower() == "true")
+            local isFalse = (valStr:lower() == "false")
+            local dotCol = _G.ShystxFlagsApplied and (isTrue and C.Green or (isFalse and C.Red or C.Cyan)) or C.TextMuted
+
+            local row = Card(ActiveView, UDim2.new(1, -8, 0, 26), nil, C.RowBg, 4, 12)
+            local rStroke = Stroke(row, C.Border)
+            row.MouseEnter:Connect(function()
+                Tween(row, {BackgroundColor3 = C.RowHover}, 0.12)
+                Tween(rStroke, {Color = C.BorderHover}, 0.12)
+            end)
+            row.MouseLeave:Connect(function()
+                Tween(row, {BackgroundColor3 = C.RowBg}, 0.12)
+                Tween(rStroke, {Color = C.Border}, 0.12)
+            end)
+
+            Card(row, UDim2.new(0, 6, 0, 6), UDim2.new(0, 8, 0.5, -3), dotCol, 3, 13)
+            Txt(row, k, UDim2.new(0.65, -20, 1, 0), UDim2.new(0, 22, 0, 0), C.TextWhite, Enum.Font.Code, Enum.TextXAlignment.Left, 13)
+            Txt(row, valStr, UDim2.new(0.35, -10, 1, 0), UDim2.new(0.65, 0, 0, 0), isTrue and C.Green or (isFalse and C.Red or C.Cyan), Enum.Font.Code, Enum.TextXAlignment.Right, 13)
+        end
+
+        local savedCount = 0
+        pcall(function()
+            if type(listfiles) == "function" then
+                local files = listfiles(CFG_DIR) or {}
+                for _, filePath in ipairs(files) do
+                    local fileName = filePath:match("([^/\\]+)%.json$")
+                    if fileName then
+                        savedCount = savedCount + 1
+                        local cfgRow = Card(SavedView, UDim2.new(1, -8, 0, 30), nil, C.RowBg, 4, 12)
+                        local cStroke = Stroke(cfgRow, C.Border)
+                        cfgRow.MouseEnter:Connect(function()
+                            Tween(cfgRow, {BackgroundColor3 = C.RowHover}, 0.12)
+                            Tween(cStroke, {Color = C.BorderHover}, 0.12)
+                        end)
+                        cfgRow.MouseLeave:Connect(function()
+                            Tween(cfgRow, {BackgroundColor3 = C.RowBg}, 0.12)
+                            Tween(cStroke, {Color = C.Border}, 0.12)
+                        end)
+
+                        Txt(cfgRow, fileName, UDim2.new(1, -160, 1, 0), UDim2.new(0, 10, 0, 0), C.TextWhite, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 13)
+                        Btn(cfgRow, "Load", UDim2.new(0, 44, 0, 22), UDim2.new(1, -140, 0.5, -11), C.BtnBg, C.Cyan, function()
+                            local cData = SafeReadFile(filePath)
+                            local flagsObj = AutoRepairJSON(cData)
+                            flagsObj["SimDefaultFluidForceEnabled"] = true
+                            flagsObj["FIntSimDefaultFluidForceEnabled"] = 999
+                            SafeWriteFile(F_PATH, HttpService:JSONEncode(flagsObj))
+                            local count = 0
+                            for fn, fv in pairs(flagsObj) do
+                                TrySetFlag(fn, fv)
+                                if not IsHiddenFlag(fn) then count = count + 1 end
+                            end
+                            _G.ShystxFlagsApplied = true
+                            _G.ShystxBoostEnabled = true
+                            ShowToast("Loaded " .. fileName .. " (" .. tostring(count) .. " flags)", C.Green)
+                            RefreshLists()
+                        end, 13)
+                        Btn(cfgRow, "Copy", UDim2.new(0, 44, 0, 22), UDim2.new(1, -92, 0.5, -11), C.BtnBg, C.TextDim, function()
+                            local cData = SafeReadFile(filePath)
+                            if type(setclipboard) == "function" then setclipboard(cData) end
+                            ShowToast("Copied " .. fileName, C.Cyan)
+                        end, 13)
+                        Btn(cfgRow, "Del", UDim2.new(0, 38, 0, 22), UDim2.new(1, -44, 0.5, -11), C.BtnBg, C.Red, function()
+                            if type(delfile) == "function" then
+                                pcall(function() delfile(filePath) end)
+                                ShowToast("Deleted " .. fileName, C.Red)
+                                RefreshLists()
+                            end
+                        end, 13)
+                    end
+                end
+            end
+        end)
+        SavedTabBtn.Text = "SAVED CONFIGS (" .. tostring(savedCount) .. ")"
+    end)
+    isRefreshing = false
+end
+
+-- Live Value Editor with Animated Set Feedback
+local function PopulateEditList(query)
+    for _, c in ipairs(EditScroll:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
+    local rawActive = SafeReadFile(F_PATH)
+    local activeDict = AutoRepairJSON(rawActive)
+    local q = (query or ""):lower()
+    if q:find("fluid", 1, true) or q:find("hipheight", 1, true) then return end
+    
+    local sortedEditKeys = {}
+    for k in pairs(activeDict) do
+        if not IsHiddenFlag(k) and (q == "" or k:lower():find(q, 1, true)) then
+            table.insert(sortedEditKeys, k)
         end
     end
-    if count == 0 then
-        ShowToast("No active flags to save!", C.Red)
-        return
-    end
+    table.sort(sortedEditKeys)
 
-    local savedConfigs = {}
-    local ok, decoded = pcall(function() return HttpService:JSONDecode(SafeReadFile(CONFIGS_PATH)) end)
-    if ok and type(decoded) == "table" then savedConfigs = decoded end
-    if type(_G.ShystxSavedConfigs) == "table" then
-        for k, v in pairs(_G.ShystxSavedConfigs) do savedConfigs[k] = v end
-    end
+    for _, k in ipairs(sortedEditKeys) do
+        local v = activeDict[k]
+        local row = Card(EditScroll, UDim2.new(1, -8, 0, 30), nil, C.RowBg, 4, 33)
+        local eStroke = Stroke(row, C.Border)
+        row.MouseEnter:Connect(function()
+            Tween(row, {BackgroundColor3 = C.RowHover}, 0.12)
+            Tween(eStroke, {Color = C.BorderHover}, 0.12)
+        end)
+        row.MouseLeave:Connect(function()
+            Tween(row, {BackgroundColor3 = C.RowBg}, 0.12)
+            Tween(eStroke, {Color = C.Border}, 0.12)
+        end)
 
-    savedConfigs[name] = activeFlags
-    _G.ShystxSavedConfigs[name] = activeFlags
-
-    local encoded = HttpService:JSONEncode(savedConfigs)
-    SafeWriteFile(CONFIGS_PATH, encoded)
-
-    pcall(function()
-        local focused = UserInputService:GetFocusedTextBox()
-        if focused then focused:ReleaseFocus() end
-    end)
-    SaveConfigPanel.Visible = false
-    ShowToast("Saved config '" .. name .. "' (" .. tostring(count) .. " flags)", C.Green)
-
-    Tween(TabSavedBtn, {BackgroundColor3 = C.Blue, TextColor3 = C.TxtWhite})
-    Tween(TabActiveBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TxtGray})
-    ActiveContainer.Visible, SavedContainer.Visible = false, true
-    RefreshLists()
-end)
-
--- Live Flag Editor Modal (Featuring High-Contrast SET & DEL Buttons)
-local EditPanel = MakeModal(520, 320)
-New("TextLabel", {Size = UDim2.new(1, -24, 0, 22), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "FastFlag Live Editor", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, EditPanel)
-local EditSearchBox = New("TextBox", {Size = UDim2.new(1, -32, 0, 28), Position = UDim2.new(0, 16, 0, 36), BackgroundColor3 = C.CardBg, PlaceholderText = "Search flags to edit...", Text = "", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, PlaceholderColor3 = C.TxtMuted, ZIndex = 21}, EditPanel, 6)
-local EditScroll = New("ScrollingFrame", {Size = UDim2.new(1, -32, 1, -120), Position = UDim2.new(0, 16, 0, 70), BackgroundColor3 = C.EditorBg, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollBarImageColor3 = C.Border, ZIndex = 21}, EditPanel, 6)
-local ELayout = New("UIListLayout", {Padding = UDim.new(0, 4)}, EditScroll)
-New("UIPadding", {PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, EditScroll)
-
-local function PopulateEditList(query)
-    for _, x in ipairs(EditScroll:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
-    local cnt = SafeReadFile(F_PATH)
-    local dec = AutoRepairJSON(cnt)
-    local filter = (query or ""):lower():gsub(" ", "")
-    if type(dec) == "table" then
-        for k, v in pairs(dec) do
-            if not IsHiddenFlag(k) and (filter == "" or k:lower():find(filter, 1, true)) then
-                pcall(function()
-                    local row = New("Frame", {Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.CardBg, BorderSizePixel = 0, ZIndex = 22}, EditScroll, 6)
-                    
-                    New("TextLabel", {
-                        Size = UDim2.new(1, -215, 1, 0),
-                        Position = UDim2.new(0, 10, 0, 0),
-                        BackgroundTransparency = 1,
-                        Text = k,
-                        Font = Enum.Font.Code,
-                        TextSize = 11,
-                        TextColor3 = C.TxtDark,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        ClipsDescendants = true,
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                        ZIndex = 23
-                    }, row)
-                    
-                    local dock = New("Frame", {Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(1, -192, 0, 0), BackgroundTransparency = 1, ZIndex = 24}, row)
-                    local valBox = New("TextBox", {Size = UDim2.new(0, 72, 0, 22), Position = UDim2.new(0, 0, 0.5, -11), BackgroundColor3 = C.EditorBg, Text = tostring(v), Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.Blue, ZIndex = 25}, dock, 4)
-                    New("UIStroke", {Thickness = 1, Color = C.Border}, valBox)
-
-                    local setBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 77, 0.5, -11), BackgroundColor3 = C.Green, BorderSizePixel = 0, Text = "SET", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
-                    local delBtn = New("TextButton", {Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 134, 0.5, -11), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "DEL", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.TxtWhite, ZIndex = 25}, dock, 4)
-
-                    local function ApplyVal()
-                        local newText = valBox.Text:gsub('^%s*(.-)%s*$', '%1')
-                        local parsedVal = tonumber(newText)
-                        if parsedVal == nil then
-                            if newText:lower() == "true" then parsedVal = true
-                            elseif newText:lower() == "false" then parsedVal = false
-                            else parsedVal = newText end
-                        end
-                        dec[k] = parsedVal
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                        TrySetFlag(k, parsedVal)
-                        flagStatusCache[k] = true
-                        return parsedVal
-                    end
-
-                    valBox.FocusLost:Connect(function() ApplyVal() RefreshLists() end)
-
-                    setBtn.MouseButton1Click:Connect(function()
-                        local finalVal = ApplyVal()
-                        setBtn.Text = "OK!"
-                        ShowToast("Set " .. k .. " = " .. tostring(finalVal), C.Green)
-                        task.delay(0.9, function() pcall(function() setBtn.Text = "SET" end) end)
-                        RefreshLists()
-                    end)
-
-                    delBtn.MouseButton1Click:Connect(function()
-                        dec[k] = nil
-                        flagStatusCache[k] = nil
-                        SafeWriteFile(F_PATH, HttpService:JSONEncode(dec))
-                        row:Destroy()
-                        ShowToast("Deleted " .. k, C.Red)
-                        RefreshLists()
-                    end)
+        Txt(row, k, UDim2.new(1, -145, 1, 0), UDim2.new(0, 8, 0, 0), C.TextWhite, Enum.Font.Code, Enum.TextXAlignment.Left, 34)
+        local valBox = Box(row, "", UDim2.new(0, 85, 0, 22), UDim2.new(1, -132, 0.5, -11), 34)
+        valBox.Text = tostring(v)
+        valBox.TextColor3 = C.Cyan
+        
+        local setBtn = nil
+        local function ApplySingleFlag()
+            local newRaw = valBox.Text
+            local parsedVal = newRaw
+            local low = tostring(newRaw):lower()
+            if low == "true" then parsedVal = true
+            elseif low == "false" then parsedVal = false
+            elseif tonumber(newRaw) ~= nil then parsedVal = tonumber(newRaw) end
+            
+            local fresh = AutoRepairJSON(SafeReadFile(F_PATH))
+            fresh[k] = parsedVal
+            SafeWriteFile(F_PATH, HttpService:JSONEncode(fresh))
+            
+            TrySetFlag(k, parsedVal)
+            
+            if setBtn then
+                Tween(setBtn, {BackgroundColor3 = C.Green}, 0.12)
+                task.delay(0.5, function()
+                    if setBtn and setBtn.Parent then Tween(setBtn, {BackgroundColor3 = C.Cyan}, 0.15) end
                 end)
             end
+
+            ShowToast("Set " .. k .. " -> " .. tostring(parsedVal), C.Green)
+            RefreshLists()
+            return parsedVal
         end
+
+        setBtn = Btn(row, "Set", UDim2.new(0, 42, 0, 22), UDim2.new(1, -44, 0.5, -11), C.Cyan, Color3.fromRGB(10, 15, 20), function()
+            ApplySingleFlag()
+        end, 34)
+        
+        valBox.FocusLost:Connect(function(enterPressed)
+            if enterPressed then ApplySingleFlag() end
+        end)
     end
-    EditScroll.CanvasSize = UDim2.new(0, 0, 0, ELayout.AbsoluteContentSize.Y + 12)
 end
 
-ELayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() EditScroll.CanvasSize = UDim2.new(0, 0, 0, ELayout.AbsoluteContentSize.Y + 12) end)
 EditSearchBox:GetPropertyChangedSignal("Text"):Connect(function() PopulateEditList(EditSearchBox.Text) end)
 
-local EditDoneBtn = New("TextButton", {Size = UDim2.new(0, 90, 0, 28), Position = UDim2.new(1, -100, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Done", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, EditPanel, 6)
-EditDoneBtn.MouseButton1Click:Connect(function()
-    pcall(function()
-        local focused = UserInputService:GetFocusedTextBox()
-        if focused then focused:ReleaseFocus() end
-    end)
-    EditPanel.Visible = false
-    RefreshLists()
-end)
-EditFlagsBtn.MouseButton1Click:Connect(function()
-    SaveConfigPanel.Visible, ImportPanel.Visible = false, false
-    EditSearchBox.Text = ""
-    PopulateEditList("")
-    EditPanel.Visible = true
-end)
+OnClick(ImportBtn, function() OpenModalAnimated(ImportPanel, 440, 280); SaveConfigPanel.Visible = false; EditPanel.Visible = false end)
+OnClick(SaveConfigBtn, function() OpenModalAnimated(SaveConfigPanel, 380, 150); ImportPanel.Visible = false; EditPanel.Visible = false end)
+OnClick(EditFlagsBtn, function() OpenModalAnimated(EditPanel, 480, 340); ImportPanel.Visible = false; SaveConfigPanel.Visible = false; PopulateEditList(EditSearchBox.Text) end)
 
--- Import Modal (With Clipboard Paste & Crash-Proof Parsing)
-local ImportPanel = MakeModal(480, 260)
-New("TextLabel", {Size = UDim2.new(1, -24, 0, 24), Position = UDim2.new(0, 16, 0, 10), BackgroundTransparency = 1, Text = "Import FastFlags JSON / List", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.TxtDark, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, ImportPanel)
-
-local ImpBox = New("TextBox", {
-    Size = UDim2.new(1, -32, 1, -104),
-    Position = UDim2.new(0, 16, 0, 38),
-    BackgroundColor3 = C.CardBg,
-    BorderSizePixel = 0,
-    MultiLine = true,
-    PlaceholderText = 'Paste JSON or flags here (e.g. {"FFlagFastGPULight": "True"} or FFlagFastGPULight = True)...',
-    Text = "",
-    Font = Enum.Font.Code,
-    TextSize = 11,
-    TextColor3 = C.TxtDark,
-    PlaceholderColor3 = C.TxtMuted,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Top,
-    ClearTextOnFocus = false,
-    ClipsDescendants = true,
-    ZIndex = 21
-}, ImportPanel, 6)
-New("UIStroke", {Thickness = 1, Color = C.Border}, ImpBox)
-
-local ImpCancel = New("TextButton", {Size = UDim2.new(0, 70, 0, 28), Position = UDim2.new(1, -384, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Cancel", Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.TxtDark, ZIndex = 21}, ImportPanel, 6)
-local ImpPaste = New("TextButton", {Size = UDim2.new(0, 106, 0, 28), Position = UDim2.new(1, -306, 1, -38), BackgroundColor3 = C.BtnBg, BorderSizePixel = 0, Text = "Paste Clipboard", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 6)
-local ImpAppend = New("TextButton", {Size = UDim2.new(0, 100, 0, 28), Position = UDim2.new(1, -194, 1, -38), BackgroundColor3 = C.Blue, BorderSizePixel = 0, Text = "Add to Existing", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 6)
-local ImpReplace = New("TextButton", {Size = UDim2.new(0, 88, 0, 28), Position = UDim2.new(1, -88, 1, -38), BackgroundColor3 = C.Red, BorderSizePixel = 0, Text = "Replace All", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.TxtWhite, ZIndex = 21}, ImportPanel, 4)
-
-local function CloseImportModal()
-    pcall(function()
-        local focused = UserInputService:GetFocusedTextBox()
-        if focused then focused:ReleaseFocus() end
-    end)
-    ImportPanel.Visible = false
-end
-
-ImportBtn.MouseButton1Click:Connect(function()
-    SaveConfigPanel.Visible, EditPanel.Visible = false, false
-    ImpBox.Text = ""
-    ImportPanel.Visible = true
-end)
-
-ImpCancel.MouseButton1Click:Connect(CloseImportModal)
-
-ImpPaste.MouseButton1Click:Connect(function()
-    local clip = nil
-    pcall(function()
-        local fn = getclipboard or get_clipboard or (type(getgenv) == "function" and getgenv().getclipboard)
-        if type(fn) == "function" then clip = fn() end
-    end)
-    if type(clip) == "string" and clip ~= "" then
-        ImpBox.Text = clip
-        ShowToast("Pasted from clipboard!", C.Green)
+OnClick(PasteClipboardBtn, function()
+    local text = SafeGetClipboard()
+    if text and text ~= "" then
+        ImportBox.Text = text
+        ShowToast("Pasted from clipboard", C.Cyan)
     else
         ShowToast("Clipboard empty or unsupported", C.Red)
     end
 end)
 
-ImpAppend.MouseButton1Click:Connect(function()
-    local textVal = ImpBox.Text
-    if textVal ~= "" then
-        local newFlags = AutoRepairJSON(textVal)
-        local currentFlags = AutoRepairJSON(SafeReadFile(F_PATH))
-        if type(newFlags) == "table" and type(currentFlags) == "table" then
-            local addCount = 0
-            for k, v in pairs(newFlags) do
-                if not IsHiddenFlag(k) then
-                    currentFlags[k] = v
-                    addCount = addCount + 1
-                end
-            end
-            SafeWriteFile(F_PATH, HttpService:JSONEncode(currentFlags))
-            table.clear(flagStatusCache)
-            ShowToast("Added " .. tostring(addCount) .. " flags to active list", C.Blue)
-            RefreshLists()
-        end
+OnClick(ApplyImportBtn, function()
+    local text = ImportBox.Text
+    if not text or text:gsub("%s+", "") == "" then ShowToast("Import box is empty!", C.Red); return end
+    local parsed = AutoRepairJSON(text)
+    local count = 0
+    for k, v in pairs(parsed) do
+        if not IsHiddenFlag(k) then count = count + 1 end
     end
-    CloseImportModal()
+    if count == 0 then ShowToast("No valid flags detected!", C.Red); return end
+    parsed["SimDefaultFluidForceEnabled"] = true
+    parsed["FIntSimDefaultFluidForceEnabled"] = 999
+    SafeWriteFile(F_PATH, HttpService:JSONEncode(parsed))
+    for k, v in pairs(parsed) do TrySetFlag(k, v) end
+    _G.ShystxFlagsApplied = true
+    _G.ShystxBoostEnabled = true
+    CloseModalAnimated(ImportPanel, 440, 280)
+    ShowToast("Imported & Applied " .. tostring(count) .. " flags!", C.Green)
+    RefreshLists()
 end)
 
-ImpReplace.MouseButton1Click:Connect(function()
-    local textVal = ImpBox.Text
-    if textVal ~= "" then
-        local newFlags = AutoRepairJSON(textVal)
-        if type(newFlags) == "table" then
-            local cleanFlags = {}
-            local rCount = 0
-            for k, v in pairs(newFlags) do
-                if not IsHiddenFlag(k) then
-                    cleanFlags[k] = v
-                    rCount = rCount + 1
-                end
-            end
-            SafeWriteFile(F_PATH, HttpService:JSONEncode(cleanFlags))
-            table.clear(flagStatusCache)
-            ShowToast("Replaced active list with " .. tostring(rCount) .. " flags", C.Red)
-            RefreshLists()
-        end
-    end
-    CloseImportModal()
+OnClick(ConfirmSaveBtn, function()
+    local cfgName = CfgNameBox.Text:gsub('^%s*(.-)%s*$', '%1')
+    if cfgName == "" then ShowToast("Enter a config name!", C.Red); return end
+    local cleanName = cfgName:gsub("[^%w_%-]", "")
+    local targetPath = CFG_DIR .. "/" .. cleanName .. ".json"
+    local currentActive = SafeReadFile(F_PATH)
+    local parsed = AutoRepairJSON(currentActive)
+    parsed["SimDefaultFluidForceEnabled"] = true
+    parsed["FIntSimDefaultFluidForceEnabled"] = 999
+    SafeWriteFile(targetPath, HttpService:JSONEncode(parsed))
+    CloseModalAnimated(SaveConfigPanel, 380, 150)
+    CfgNameBox.Text = ""
+    ShowToast("Saved " .. cleanName, C.Green)
+    RefreshLists()
 end)
 
--- Action Buttons Wiring
-CopyBtn.MouseButton1Click:Connect(function()
-    local currentFlags = SafeReadFile(F_PATH)
-    if type(setclipboard) == "function" then
-        pcall(function() setclipboard(currentFlags) end)
-        ShowToast("Copied active flags JSON to clipboard", C.Blue)
-    end
-end)
-
-ClearBtn.MouseButton1Click:Connect(function()
-    SafeWriteFile(F_PATH, "{}")
+OnClick(ClearBtn, function()
+    local empty = {["SimDefaultFluidForceEnabled"] = true, ["FIntSimDefaultFluidForceEnabled"] = 999}
+    SafeWriteFile(F_PATH, HttpService:JSONEncode(empty))
+    SafeWriteFile(STATE_PATH, HttpService:JSONEncode({injected = false}))
     _G.ShystxFlagsApplied = false
     _G.ShystxBoostEnabled = false
-    isArmed = false
-    table.clear(shiftTaps)
-    table.clear(l3Taps)
-    table.clear(flagStatusCache)
     ShowToast("Active flags cleared", C.Red)
     RefreshLists()
 end)
 
-InjectBtn.MouseButton1Click:Connect(function()
+OnClick(InjectBtn, function()
     local decoded = AutoRepairJSON(SafeReadFile(F_PATH))
     local count = 0
     if type(decoded) == "table" then
         for k, val in pairs(decoded) do
-            TrySetFlag(k, val)
+            local ok = TrySetFlag(k, val)
             if not IsHiddenFlag(k) then count = count + 1 end
         end
     end
     TrySetFlag("SimDefaultFluidForceEnabled", true)
-    TrySetFlag("FIntSimDefaultFluidForceEnabled", 1)
+    TrySetFlag("FIntSimDefaultFluidForceEnabled", 999)
     SafeWriteFile(F_PATH, HttpService:JSONEncode(decoded))
+    SafeWriteFile(STATE_PATH, HttpService:JSONEncode({injected = true}))
     _G.ShystxFlagsApplied = true
     _G.ShystxBoostEnabled = true
-    table.clear(flagStatusCache)
-    ShowToast("Applied " .. tostring(count) .. " FastFlags into engine", C.Green)
+    if q then pcall(function() q(fullSource) end) end
+    pcall(function()
+        TrackConn(LocalPlayer.OnTeleport:Connect(function()
+            if q then pcall(function() q(fullSource) end) end
+        end))
+    end)
+    ShowToast("Injected " .. tostring(count) .. " flags!", C.Cyan)
     RefreshLists()
 end)
 
+-- Window Exit & Minimize Animations
 local function ExitUI()
-    if pConn then pcall(function() pConn:Disconnect() end) end
-    local tw = Tween(UiScale, {Scale = 0.01}, 0.25, Enum.EasingStyle.Quart)
+    local tw = Tween(UiScale, {Scale = 0.01}, 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
     tw.Completed:Connect(function() pcall(function() ScreenGui:Destroy() end) end)
 end
-WipeBtn.MouseButton1Click:Connect(ExitUI)
-ClsBtn.MouseButton1Click:Connect(ExitUI)
-MinBtn.MouseButton1Click:Connect(function()
-    Main.Visible = not Main.Visible
-    if not Main.Visible then ImportPanel.Visible, SaveConfigPanel.Visible, EditPanel.Visible = false, false, false end
+OnClick(ClsBtn, ExitUI)
+
+local isMinimized = false
+OnClick(MinBtn, function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        ImportPanel.Visible = false
+        SaveConfigPanel.Visible = false
+        EditPanel.Visible = false
+        Tween(Main, {Size = UDim2.new(0, 480, 0, 36)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    else
+        Tween(Main, {Size = UDim2.new(0, 480, 0, 360)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    end
 end)
 
--- Window Drag Engine (With Bulletproof Release Safety)
+-- Smooth Window Dragging
 local drag, dInput, dStart, sPos = false, nil, nil, nil
 TopBar.InputBegan:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
@@ -1422,13 +1307,12 @@ end)
 UserInputService.InputChanged:Connect(function(inp)
     if inp == dInput and drag then
         local delta = inp.Position - dStart
-        Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / math.max(UiScale.Scale, 0.01)), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / math.max(UiScale.Scale, 0.01))) 
+        local scale = math.max(UiScale.Scale, 0.01)
+        Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / scale), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / scale))
     end
 end)
 UserInputService.InputEnded:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
-        drag = false
-    end
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then drag = false end
 end)
 
 RefreshLists()
