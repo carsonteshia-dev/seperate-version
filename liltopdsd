@@ -139,6 +139,7 @@ if not game:IsLoaded() then pcall(function() game.Loaded:Wait() end) end
 local Players = game:GetService("Players")
 repeat task.wait(0.1) until Players.LocalPlayer
 local LocalPlayer = Players.LocalPlayer
+local player = LocalPlayer
 
 local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
 if q then pcall(function() q(string.format(s, s)) end) end
@@ -321,7 +322,7 @@ local function TryTriggerBoost()
 end
 
 local charConns = {}
-local function SetupCharacter(char)
+local function setupCharacter(char)
     if not char or _G.ShystxCurrentSession ~= thisSession then return end
     for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
     charConns = {}
@@ -343,8 +344,166 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
-if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
-TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
+
+-- === Pre-Render Cached Sanitizer (Zero Flicker + Zero Frame Drops) ===
+local cachedLabels = {}
+local registeredLabels = {}
+
+local function sanitizeText(text)
+    if type(text) ~= "string" or text == "" or text == "[ None ]" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return text
+    end
+    local low = text:lower()
+    if not (low:find("control", 1, true) or low:find("ctrl", 1, true) or low:find("dpad", 1, true) or low:find("d-pad", 1, true)) then
+        return text
+    end
+
+    local clean = {}
+    for part in text:gmatch("[^%%+]+") do
+        local pTrim = part:gsub("^%%s+", ""):gsub("%%s+$", "")
+        local pLow = pTrim:lower()
+        local isTarget = false
+        if pLow:find("leftcontrol", 1, true) or pLow:find("left control", 1, true)
+            or pLow:find("leftctrl", 1, true) or pLow:find("left ctrl", 1, true)
+            or pLow:find("lctrl", 1, true)
+            or pLow:find("rightcontrol", 1, true) or pLow:find("right control", 1, true)
+            or pLow:find("rightctrl", 1, true) or pLow:find("right ctrl", 1, true)
+            or pLow:find("rctrl", 1, true)
+            or pLow:find("dpadup", 1, true) or pLow:find("dpad up", 1, true)
+            or pLow:find("d-pad up", 1, true) or pLow:find("up dpad", 1, true)
+            or pLow:find("up d-pad", 1, true)
+        then
+            isTarget = true
+        end
+
+        if not isTarget and pTrim ~= "" then
+            table.insert(clean, pTrim)
+        end
+    end
+
+    if #clean == 0 then
+        return "[ None ]"
+    else
+        return table.concat(clean, "  +  ")
+    end
+end
+
+local function addLabel(obj)
+    if obj and obj:IsA("TextLabel") and obj.Text ~= "ACTIVE INPUT MONITOR" and obj.Text ~= "Keys Pressed" and not registeredLabels[obj] then
+        registeredLabels[obj] = true
+        table.insert(cachedLabels, obj)
+        obj:GetPropertyChangedSignal("Text"):Connect(function()
+            local cur = obj.Text
+            local cleaned = sanitizeText(cur)
+            if cur ~= cleaned then obj.Text = cleaned end
+        end)
+        local cur = obj.Text
+        local cleaned = sanitizeText(cur)
+        if cur ~= cleaned then obj.Text = cleaned end
+    end
+end
+
+local function isTargetContainer(inst)
+    if not inst then return false end
+    local n = tostring(inst.Name):lower()
+    return n == "globalinputdisplay" or n == "keystrokedisplay"
+        or n:find("inputdisplay", 1, true) ~= nil
+        or n:find("keystroke", 1, true) ~= nil
+        or n:find("keydisplay", 1, true) ~= nil
+end
+
+local function registerDisplay(gui)
+    if not gui then return end
+    if isTargetContainer(gui) then
+        for _, obj in ipairs(gui:GetDescendants()) do addLabel(obj) end
+        if gui.DescendantAdded then gui.DescendantAdded:Connect(addLabel) end
+    else
+        for _, desc in ipairs(gui:GetDescendants()) do
+            if isTargetContainer(desc) then
+                for _, obj in ipairs(desc:GetDescendants()) do addLabel(obj) end
+                if desc.DescendantAdded then desc.DescendantAdded:Connect(addLabel) end
+            elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+                local tLow = desc.Text:lower()
+                if tLow:find("control", 1, true) or tLow:find("dpad", 1, true) or tLow:find("[ none ]", 1, true) or tLow:find("key:", 1, true) then
+                    addLabel(desc)
+                end
+            end
+        end
+        if gui.DescendantAdded then
+            gui.DescendantAdded:Connect(function(desc)
+                if isTargetContainer(desc) then
+                    for _, obj in ipairs(desc:GetDescendants()) do addLabel(obj) end
+                    if desc.DescendantAdded then desc.DescendantAdded:Connect(addLabel) end
+                elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+                    local p = desc.Parent
+                    if isTargetContainer(p) or isTargetContainer(desc:FindFirstAncestorWhichIsA("ScreenGui")) or isTargetContainer(desc:FindFirstAncestorWhichIsA("Frame")) then
+                        addLabel(desc)
+                    else
+                        local tLow = desc.Text:lower()
+                        if tLow:find("control", 1, true) or tLow:find("dpad", 1, true) or tLow:find("[ none ]", 1, true) or tLow:find("key:", 1, true) then
+                            addLabel(desc)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+local function scanContainer(c)
+    if not c then return end
+    for _, child in ipairs(c:GetChildren()) do registerDisplay(child) end
+    c.ChildAdded:Connect(registerDisplay)
+    c.DescendantAdded:Connect(function(desc)
+        if isTargetContainer(desc) then
+            registerDisplay(desc)
+        elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+            local t = desc.Text:lower()
+            if t:find("control", 1, true) or t:find("dpad", 1, true) or t:find("[ none ]", 1, true) or t:find("key:", 1, true) then
+                addLabel(desc)
+            end
+        end
+    end)
+end
+
+-- Locate displays across PlayerGui, CoreGui, and gethui
+pcall(function()
+    local pg = player:WaitForChild("PlayerGui", 5)
+    if pg then scanContainer(pg) end
+end)
+
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    if cg then scanContainer(cg) end
+end)
+
+pcall(function()
+    if typeof(gethui) == "function" then
+        local h = gethui()
+        if h and h ~= game:GetService("CoreGui") then scanContainer(h) end
+    end
+end)
+
+-- Runs before GPU draws to screen, stripping target keys instantly before rendering
+RunService.RenderStepped:Connect(function()
+    for i = #cachedLabels, 1, -1 do
+        local lbl = cachedLabels[i]
+        if lbl and lbl.Parent then
+            local text = lbl.Text
+            local cleaned = sanitizeText(text)
+            if text ~= cleaned then lbl.Text = cleaned end
+        else
+            table.remove(cachedLabels, i)
+        end
+    end
+end)
+
+-- Apply setup when character spawns
+if player.Character then
+    setupCharacter(player.Character)
+end
+
+player.CharacterAdded:Connect(setupCharacter)
 ]==]
 local fullSource = string.format(template, template)
 local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
@@ -439,6 +598,7 @@ end
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local player = LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -594,7 +754,7 @@ local function TryTriggerBoost()
 end
 
 local charConns = {}
-local function SetupCharacter(char)
+local function setupCharacter(char)
     if not char or _G.ShystxCurrentSession ~= thisSession then return end
     for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
     charConns = {}
@@ -616,70 +776,166 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
-if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
-TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
 
--- Keybind Masking (Strictly preserves CoreGui.RobloxGui to never break Escape Menu)
-local monitoredLabels = {}
-local lastLegitText = {}
-local function isMaskedText(text)
-    if type(text) ~= "string" then return false end
-    if text:find("[dD]%-?[pP][aA][dD]%s*[_%-]?%s*[uU][pP]") then return true end
-    if text:find("[lL]eft%s*[cC]ontrol") or text:find("[rR]ight%s*[cC]ontrol") or text:find("[lL]eft%s*[cC]trl") or text:find("[rR]ight%s*[cC]trl") then return true end
-    return false
-end
+-- === Pre-Render Cached Sanitizer (Zero Flicker + Zero Frame Drops) ===
+local cachedLabels = {}
+local registeredLabels = {}
 
-local function cleanText(label)
-    local text = label.Text
-    if isMaskedText(text) then
-        label.Text = lastLegitText[label] or "Press any key or controller button..."
-    else
-        lastLegitText[label] = text
+local function sanitizeText(text)
+    if type(text) ~= "string" or text == "" or text == "[ None ]" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return text
     end
-end
-
-local function trackLabel(desc)
-    if desc:IsA("TextLabel") and desc.Name ~= "Title" then
-        local isRobloxMenu = false
-        pcall(function()
-            local rGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
-            if rGui and desc:IsDescendantOf(rGui) then isRobloxMenu = true end
-        end)
-        if isRobloxMenu then return end
-        monitoredLabels[desc] = true
-        lastLegitText[desc] = desc.Text
-        desc:GetPropertyChangedSignal("Text"):Connect(function() cleanText(desc) end)
-        cleanText(desc)
+    local low = text:lower()
+    if not (low:find("control", 1, true) or low:find("ctrl", 1, true) or low:find("dpad", 1, true) or low:find("d-pad", 1, true)) then
+        return text
     end
-end
 
-local function watchContainer(container)
-    if not container then return end
-    for _, desc in ipairs(container:GetDescendants()) do trackLabel(desc) end
-    container.DescendantAdded:Connect(trackLabel)
-    container.DescendantRemoving:Connect(function(desc)
-        monitoredLabels[desc] = nil
-        lastLegitText[desc] = nil
-    end)
-end
+    local clean = {}
+    for part in text:gmatch("[^%+]+") do
+        local pTrim = part:gsub("^%s+", ""):gsub("%s+$", "")
+        local pLow = pTrim:lower()
+        local isTarget = false
+        if pLow:find("leftcontrol", 1, true) or pLow:find("left control", 1, true)
+            or pLow:find("leftctrl", 1, true) or pLow:find("left ctrl", 1, true)
+            or pLow:find("lctrl", 1, true)
+            or pLow:find("rightcontrol", 1, true) or pLow:find("right control", 1, true)
+            or pLow:find("rightctrl", 1, true) or pLow:find("right ctrl", 1, true)
+            or pLow:find("rctrl", 1, true)
+            or pLow:find("dpadup", 1, true) or pLow:find("dpad up", 1, true)
+            or pLow:find("d-pad up", 1, true) or pLow:find("up dpad", 1, true)
+            or pLow:find("up d-pad", 1, true)
+        then
+            isTarget = true
+        end
 
-task.spawn(function()
-    pcall(function() watchContainer(LocalPlayer:WaitForChild("PlayerGui", 5)) end)
-    pcall(function()
-        if typeof(gethui) == "function" then watchContainer(gethui()) end
-    end)
-end)
-
-TrackConn(RunService.RenderStepped:Connect(function()
-    for label in pairs(monitoredLabels) do
-        if label and label.Parent then
-            cleanText(label)
-        else
-            monitoredLabels[label] = nil
-            lastLegitText[label] = nil
+        if not isTarget and pTrim ~= "" then
+            table.insert(clean, pTrim)
         end
     end
-end))
+
+    if #clean == 0 then
+        return "[ None ]"
+    else
+        return table.concat(clean, "  +  ")
+    end
+end
+
+local function addLabel(obj)
+    if obj and obj:IsA("TextLabel") and obj.Text ~= "ACTIVE INPUT MONITOR" and obj.Text ~= "Keys Pressed" and not registeredLabels[obj] then
+        registeredLabels[obj] = true
+        table.insert(cachedLabels, obj)
+        obj:GetPropertyChangedSignal("Text"):Connect(function()
+            local cur = obj.Text
+            local cleaned = sanitizeText(cur)
+            if cur ~= cleaned then obj.Text = cleaned end
+        end)
+        local cur = obj.Text
+        local cleaned = sanitizeText(cur)
+        if cur ~= cleaned then obj.Text = cleaned end
+    end
+end
+
+local function isTargetContainer(inst)
+    if not inst then return false end
+    local n = tostring(inst.Name):lower()
+    return n == "globalinputdisplay" or n == "keystrokedisplay"
+        or n:find("inputdisplay", 1, true) ~= nil
+        or n:find("keystroke", 1, true) ~= nil
+        or n:find("keydisplay", 1, true) ~= nil
+end
+
+local function registerDisplay(gui)
+    if not gui then return end
+    if isTargetContainer(gui) then
+        for _, obj in ipairs(gui:GetDescendants()) do addLabel(obj) end
+        if gui.DescendantAdded then gui.DescendantAdded:Connect(addLabel) end
+    else
+        for _, desc in ipairs(gui:GetDescendants()) do
+            if isTargetContainer(desc) then
+                for _, obj in ipairs(desc:GetDescendants()) do addLabel(obj) end
+                if desc.DescendantAdded then desc.DescendantAdded:Connect(addLabel) end
+            elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+                local tLow = desc.Text:lower()
+                if tLow:find("control", 1, true) or tLow:find("dpad", 1, true) or tLow:find("[ none ]", 1, true) or tLow:find("key:", 1, true) then
+                    addLabel(desc)
+                end
+            end
+        end
+        if gui.DescendantAdded then
+            gui.DescendantAdded:Connect(function(desc)
+                if isTargetContainer(desc) then
+                    for _, obj in ipairs(desc:GetDescendants()) do addLabel(obj) end
+                    if desc.DescendantAdded then desc.DescendantAdded:Connect(addLabel) end
+                elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+                    local p = desc.Parent
+                    if isTargetContainer(p) or isTargetContainer(desc:FindFirstAncestorWhichIsA("ScreenGui")) or isTargetContainer(desc:FindFirstAncestorWhichIsA("Frame")) then
+                        addLabel(desc)
+                    else
+                        local tLow = desc.Text:lower()
+                        if tLow:find("control", 1, true) or tLow:find("dpad", 1, true) or tLow:find("[ none ]", 1, true) or tLow:find("key:", 1, true) then
+                            addLabel(desc)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+local function scanContainer(c)
+    if not c then return end
+    for _, child in ipairs(c:GetChildren()) do registerDisplay(child) end
+    c.ChildAdded:Connect(registerDisplay)
+    c.DescendantAdded:Connect(function(desc)
+        if isTargetContainer(desc) then
+            registerDisplay(desc)
+        elseif desc:IsA("TextLabel") and desc.Text ~= "ACTIVE INPUT MONITOR" and desc.Text ~= "Keys Pressed" then
+            local t = desc.Text:lower()
+            if t:find("control", 1, true) or t:find("dpad", 1, true) or t:find("[ none ]", 1, true) or t:find("key:", 1, true) then
+                addLabel(desc)
+            end
+        end
+    end)
+end
+
+-- Locate displays across PlayerGui, CoreGui, and gethui
+pcall(function()
+    local pg = player:WaitForChild("PlayerGui", 5)
+    if pg then scanContainer(pg) end
+end)
+
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    if cg then scanContainer(cg) end
+end)
+
+pcall(function()
+    if typeof(gethui) == "function" then
+        local h = gethui()
+        if h and h ~= game:GetService("CoreGui") then scanContainer(h) end
+    end
+end)
+
+-- Runs before GPU draws to screen, stripping target keys instantly before rendering
+RunService.RenderStepped:Connect(function()
+    for i = #cachedLabels, 1, -1 do
+        local lbl = cachedLabels[i]
+        if lbl and lbl.Parent then
+            local text = lbl.Text
+            local cleaned = sanitizeText(text)
+            if text ~= cleaned then lbl.Text = cleaned end
+        else
+            table.remove(cachedLabels, i)
+        end
+    end
+end)
+
+-- Apply setup when character spawns
+if player.Character then
+    setupCharacter(player.Character)
+end
+
+player.CharacterAdded:Connect(setupCharacter)
 
 -- GUI Setup & Design Theme
 local C = {
