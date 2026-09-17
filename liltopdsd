@@ -352,7 +352,7 @@ local registeredLabels = {}
 local function isTargetToken(token)
     if type(token) ~= "string" then return false end
     local t = token:gsub("^%%s+", ""):gsub("%%s+$", ""):lower()
-    if t == "" then return false end
+    if t == "" or t == "[ none ]" or t == "none" or t == "[none]" then return true end
 
     -- Control variants
     if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
@@ -396,14 +396,20 @@ local function isTargetToken(token)
 end
 
 local function sanitizeText(text)
-    if type(text) ~= "string" or text == "" or text == "[ None ]" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
-        return text
+    if type(text) ~= "string" or text == "" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return ""
     end
-    local low = text:lower()
+
+    local tTrim = text:gsub("^%%s+", ""):gsub("%%s+$", "")
+    local tLow = tTrim:lower()
+    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
+        return ""
+    end
+
     local hasTarget = false
-    if low:find("control", 1, true) or low:find("ctrl", 1, true) or low:find("dpad", 1, true) or low:find("d-pad", 1, true) then
+    if tLow:find("control", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("dpad", 1, true) or tLow:find("d-pad", 1, true) then
         hasTarget = true
-    elseif (low:find("gamepad", 1, true) or low:find("controller", 1, true) or low:find("touch", 1, true) or low:find("button", 1, true)) and (low:find("up", 1, true) or low:find("ctrl", 1, true) or low:find("control", 1, true)) then
+    elseif (tLow:find("gamepad", 1, true) or tLow:find("controller", 1, true) or tLow:find("touch", 1, true) or tLow:find("button", 1, true)) and (tLow:find("up", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("control", 1, true)) then
         hasTarget = true
     end
 
@@ -434,7 +440,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return "[ None ]"
+        return ""
     else
         return table.concat(clean, delim)
     end
@@ -442,7 +448,13 @@ end
 
 local function addLabel(obj)
     if not obj or registeredLabels[obj] then return end
-    if not (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then return end
+    local isTxt = false
+    pcall(function()
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            isTxt = true
+        end
+    end)
+    if not isTxt then return end
     if obj.Text == "ACTIVE INPUT MONITOR" or obj.Text == "Keys Pressed" then return end
 
     registeredLabels[obj] = true
@@ -459,35 +471,73 @@ local function addLabel(obj)
     if cur ~= cleaned then obj.Text = cleaned end
 end
 
-local function scanContainer(c)
-    if not c then return end
-    for _, desc in ipairs(c:GetDescendants()) do addLabel(desc) end
-    c.DescendantAdded:Connect(addLabel)
+local function safeScan(container)
+    if not container then return end
+    pcall(function()
+        local descs = container:GetDescendants()
+        if type(descs) == "table" then
+            for _, d in ipairs(descs) do addLabel(d) end
+        end
+    end)
+    pcall(function()
+        local children = container:GetChildren()
+        if type(children) == "table" then
+            for _, c in ipairs(children) do addLabel(c) end
+        end
+    end)
+    pcall(function()
+        container.DescendantAdded:Connect(addLabel)
+    end)
+    pcall(function()
+        container.ChildAdded:Connect(addLabel)
+    end)
 end
 
--- Scan PlayerGui (and monitor respawns for mobile/controller)
+-- Scan PlayerGui
 pcall(function()
     local pg = player:WaitForChild("PlayerGui", 5)
-    if pg then scanContainer(pg) end
+    if pg then safeScan(pg) end
 end)
-
 pcall(function()
     player.ChildAdded:Connect(function(child)
-        if child:IsA("PlayerGui") then scanContainer(child) end
+        if child:IsA("PlayerGui") then safeScan(child) end
     end)
 end)
 
 -- Scan CoreGui
 pcall(function()
     local cg = game:GetService("CoreGui")
-    if cg then scanContainer(cg) end
+    if cg then safeScan(cg) end
 end)
 
--- Scan gethui() for mobile/desktop exploit environments
+-- Scan gethui() (Executor hidden container)
 pcall(function()
     if typeof(gethui) == "function" then
         local h = gethui()
-        if h and h ~= game:GetService("CoreGui") then scanContainer(h) end
+        if h and h ~= game:GetService("CoreGui") then safeScan(h) end
+    end
+end)
+
+-- Universal exploit scan (Delta, Codex, Fluxus, Arceus X, etc.)
+pcall(function()
+    if typeof(getinstances) == "function" then
+        for _, obj in ipairs(getinstances()) do
+            addLabel(obj)
+        end
+    end
+end)
+
+-- Continuous background watcher to catch dynamically injected mobile GUIs
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            if typeof(getinstances) == "function" then
+                for _, obj in ipairs(getinstances()) do
+                    addLabel(obj)
+                end
+            end
+        end)
     end
 end)
 
@@ -516,7 +566,7 @@ player.CharacterAdded:Connect(function(char)
     task.delay(0.5, function()
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
-            if pg then scanContainer(pg) end
+            if pg then safeScan(pg) end
         end)
     end)
 end)
@@ -800,7 +850,7 @@ local registeredLabels = {}
 local function isTargetToken(token)
     if type(token) ~= "string" then return false end
     local t = token:gsub("^%s+", ""):gsub("%s+$", ""):lower()
-    if t == "" then return false end
+    if t == "" or t == "[ none ]" or t == "none" or t == "[none]" then return true end
 
     -- Control variants
     if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
@@ -844,14 +894,20 @@ local function isTargetToken(token)
 end
 
 local function sanitizeText(text)
-    if type(text) ~= "string" or text == "" or text == "[ None ]" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
-        return text
+    if type(text) ~= "string" or text == "" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return ""
     end
-    local low = text:lower()
+
+    local tTrim = text:gsub("^%s+", ""):gsub("%s+$", "")
+    local tLow = tTrim:lower()
+    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
+        return ""
+    end
+
     local hasTarget = false
-    if low:find("control", 1, true) or low:find("ctrl", 1, true) or low:find("dpad", 1, true) or low:find("d-pad", 1, true) then
+    if tLow:find("control", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("dpad", 1, true) or tLow:find("d-pad", 1, true) then
         hasTarget = true
-    elseif (low:find("gamepad", 1, true) or low:find("controller", 1, true) or low:find("touch", 1, true) or low:find("button", 1, true)) and (low:find("up", 1, true) or low:find("ctrl", 1, true) or low:find("control", 1, true)) then
+    elseif (tLow:find("gamepad", 1, true) or tLow:find("controller", 1, true) or tLow:find("touch", 1, true) or tLow:find("button", 1, true)) and (tLow:find("up", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("control", 1, true)) then
         hasTarget = true
     end
 
@@ -882,7 +938,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return "[ None ]"
+        return ""
     else
         return table.concat(clean, delim)
     end
@@ -890,7 +946,13 @@ end
 
 local function addLabel(obj)
     if not obj or registeredLabels[obj] then return end
-    if not (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then return end
+    local isTxt = false
+    pcall(function()
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            isTxt = true
+        end
+    end)
+    if not isTxt then return end
     if obj.Text == "ACTIVE INPUT MONITOR" or obj.Text == "Keys Pressed" then return end
 
     registeredLabels[obj] = true
@@ -907,35 +969,73 @@ local function addLabel(obj)
     if cur ~= cleaned then obj.Text = cleaned end
 end
 
-local function scanContainer(c)
-    if not c then return end
-    for _, desc in ipairs(c:GetDescendants()) do addLabel(desc) end
-    c.DescendantAdded:Connect(addLabel)
+local function safeScan(container)
+    if not container then return end
+    pcall(function()
+        local descs = container:GetDescendants()
+        if type(descs) == "table" then
+            for _, d in ipairs(descs) do addLabel(d) end
+        end
+    end)
+    pcall(function()
+        local children = container:GetChildren()
+        if type(children) == "table" then
+            for _, c in ipairs(children) do addLabel(c) end
+        end
+    end)
+    pcall(function()
+        container.DescendantAdded:Connect(addLabel)
+    end)
+    pcall(function()
+        container.ChildAdded:Connect(addLabel)
+    end)
 end
 
--- Scan PlayerGui (and monitor respawns for mobile/controller)
+-- Scan PlayerGui
 pcall(function()
     local pg = player:WaitForChild("PlayerGui", 5)
-    if pg then scanContainer(pg) end
+    if pg then safeScan(pg) end
 end)
-
 pcall(function()
     player.ChildAdded:Connect(function(child)
-        if child:IsA("PlayerGui") then scanContainer(child) end
+        if child:IsA("PlayerGui") then safeScan(child) end
     end)
 end)
 
 -- Scan CoreGui
 pcall(function()
     local cg = game:GetService("CoreGui")
-    if cg then scanContainer(cg) end
+    if cg then safeScan(cg) end
 end)
 
--- Scan gethui() for mobile/desktop exploit environments
+-- Scan gethui() (Executor hidden container)
 pcall(function()
     if typeof(gethui) == "function" then
         local h = gethui()
-        if h and h ~= game:GetService("CoreGui") then scanContainer(h) end
+        if h and h ~= game:GetService("CoreGui") then safeScan(h) end
+    end
+end)
+
+-- Universal exploit scan (Delta, Codex, Fluxus, Arceus X, etc.)
+pcall(function()
+    if typeof(getinstances) == "function" then
+        for _, obj in ipairs(getinstances()) do
+            addLabel(obj)
+        end
+    end
+end)
+
+-- Continuous background watcher to catch dynamically injected mobile GUIs
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            if typeof(getinstances) == "function" then
+                for _, obj in ipairs(getinstances()) do
+                    addLabel(obj)
+                end
+            end
+        end)
     end
 end)
 
@@ -964,7 +1064,7 @@ player.CharacterAdded:Connect(function(char)
     task.delay(0.5, function()
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
-            if pg then scanContainer(pg) end
+            if pg then safeScan(pg) end
         end)
     end)
 end)
