@@ -406,7 +406,7 @@ local function sanitizeText(text)
     local tTrim = text:gsub("^%%s+", ""):gsub("%%s+$", "")
     local tLow = tTrim:lower()
     if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
-        return text
+        return text  -- leave [ None ] exactly as the script wrote it, do not modify
     end
 
     local hasTarget = false
@@ -443,7 +443,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return "[ None ]"
+        return ""  -- nothing shown when only boost key is held
     else
         return table.concat(clean, delim)
     end
@@ -907,7 +907,7 @@ local function sanitizeText(text)
     local tTrim = text:gsub("^%s+", ""):gsub("%s+$", "")
     local tLow = tTrim:lower()
     if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
-        return text
+        return text  -- leave [ None ] exactly as the script wrote it, do not modify
     end
 
     local hasTarget = false
@@ -944,7 +944,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return "[ None ]"
+        return ""  -- nothing shown when only boost key is held
     else
         return table.concat(clean, delim)
     end
