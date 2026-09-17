@@ -345,76 +345,76 @@ end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
 
--- === Pre-Render Cached Sanitizer (Targeted: GlobalInputDisplay + KeystrokeDisplay only) ===
+-- === Pre-Render Cached Sanitizer (Broad scan, content-gated) ===
 local cachedLabels = {}
 local registeredLabels = {}
 
-local function isTargetToken(token)
-    if type(token) ~= "string" then return false end
-    local t = token:gsub("^%%s+", ""):gsub("%%s+$", ""):lower()
+local BOOST_TARGETS = {
+    ["leftcontrol"] = true, ["left control"] = true,
+    ["leftctrl"] = true, ["left ctrl"] = true, ["lctrl"] = true,
+    ["rightcontrol"] = true, ["right control"] = true,
+    ["rightctrl"] = true, ["right ctrl"] = true, ["rctrl"] = true,
+    ["dpadup"] = true, ["dpad up"] = true,
+    ["d-pad up"] = true, ["dpad-up"] = true,
+    ["up dpad"] = true, ["up d-pad"] = true,
+}
+
+local function isTargetToken(raw)
+    if type(raw) ~= "string" then return false end
+    local t = raw:gsub("^%%s+", ""):gsub("%%s+$", ""):lower()
     if t == "" then return false end
-
-    if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
-        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true)
-        or t:find("lctrl", 1, true)
-        or t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
-        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true)
-        or t:find("rctrl", 1, true)
-    then
+    if BOOST_TARGETS[t] then return true end
+    -- strip "key: " / "gamepad: " / "mouse: " / "touch: " prefix then check
+    local inner = t:match("^%%a[%%a%%s%%-_/]+:%%s*(.+)$")
+    if inner and BOOST_TARGETS[inner] then return true end
+    -- fuzzy: (left|right) + control variants
+    if (t:find("left", 1, true) or t:find("right", 1, true)) and
+       (t:find("control", 1, true) or t:find("ctrl", 1, true)) then
         return true
     end
-
-    if (t:find("control", 1, true) or t:find("ctrl", 1, true)) and (t:find("left", 1, true) or t:find("right", 1, true)) then
+    -- dpad + up variants
+    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true) or t:find("d pad", 1, true))
+        and t:find("up", 1, true) then
         return true
     end
+    return false
+end
 
-    if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
-        or t:find("d-pad up", 1, true) or t:find("dpad-up", 1, true)
-        or t:find("up dpad", 1, true) or t:find("up d-pad", 1, true)
-    then
-        return true
-    end
-
-    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then
-        return true
-    end
-
-    if (t:find("gamepad", 1, true) or t:find("controller", 1, true)) and (t:find("dpad", 1, true) or t:find("d-pad", 1, true) or t:find("up", 1, true)) then
-        return true
-    end
-
+-- Only sanitize text that looks like a keystroke display entry
+local function isKeystrokeText(text)
+    local t = text:lower():gsub("^%%s+", ""):gsub("%%s+$", "")
+    if t == "[ none ]" or t == "[none]" or t == "none" then return true end
+    -- starts with a known input prefix
+    if t:match("^key%%s*:") or t:match("^gamepad%%s*:")
+        or t:match("^mouse%%s*:") or t:match("^touch%%s*:")
+        or t:match("^button%%s*:") or t:match("^axis%%s*:")
+    then return true end
     return false
 end
 
 local function sanitizeText(text)
     if type(text) ~= "string" or text == "" then return text end
     if text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then return text end
+    if not isKeystrokeText(text) then return text end
 
     local tLow = text:lower():gsub("^%%s+", ""):gsub("%%s+$", "")
-    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" then
-        return text
-    end
+    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" then return text end
 
-    local hasTarget = false
-    if tLow:find("control", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("dpad", 1, true) or tLow:find("d-pad", 1, true) then
-        hasTarget = true
-    elseif (tLow:find("gamepad", 1, true) or tLow:find("controller", 1, true)) and tLow:find("up", 1, true) then
-        hasTarget = true
+    if not isTargetToken(text) then
+        local hasAny = false
+        for part in text:gmatch("[^%%+,]+") do
+            if isTargetToken(part) then hasAny = true break end
+        end
+        if not hasAny then return text end
     end
-
-    if not hasTarget then return text end
 
     local delim = "  +  "
-    local splitPattern = "[^%%+]+"
-    if text:find("%%+", 1, true) then
-        delim = text:find("  %%+  ") and "  +  " or " + "
-    elseif text:find(",", 1, true) then
-        splitPattern = "[^,]+"
+    if text:find(",", 1, true) and not text:find("%%+", 1, true) then
         delim = text:find(", ") and ", " or ","
     end
 
     local clean = {}
-    for part in text:gmatch(splitPattern) do
+    for part in text:gmatch("[^%%+,]+") do
         local pTrim = part:gsub("^%%s+", ""):gsub("%%s+$", "")
         if not isTargetToken(pTrim) and pTrim ~= "" then
             table.insert(clean, pTrim)
@@ -430,7 +430,7 @@ end
 
 local function hookLabel(lbl)
     if not lbl or registeredLabels[lbl] then return end
-    local ok = pcall(function()
+    pcall(function()
         if not (lbl:IsA("TextLabel") or lbl:IsA("TextButton") or lbl:IsA("TextBox")) then return end
         if lbl.Text == "ACTIVE INPUT MONITOR" or lbl.Text == "Keys Pressed" then return end
 
@@ -449,70 +449,52 @@ local function hookLabel(lbl)
     end)
 end
 
--- TARGETED: Only scan inside named display containers, never entire PlayerGui/CoreGui
-local function hookContainer(container)
+local function safeScan(container)
     if not container then return end
     pcall(function()
-        for _, desc in ipairs(container:GetDescendants()) do hookLabel(desc) end
+        for _, d in ipairs(container:GetDescendants()) do hookLabel(d) end
         container.DescendantAdded:Connect(hookLabel)
-    end)
-end
-
-local function findAndHookDisplays(root)
-    if not root then return end
-    pcall(function()
-        for _, child in ipairs(root:GetChildren()) do
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true)
-                or n:find("keystroke", 1, true)
-                or n:find("keydisplay", 1, true)
-            then
-                hookContainer(child)
-            end
-        end
-        root.ChildAdded:Connect(function(child)
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true)
-                or n:find("keystroke", 1, true)
-                or n:find("keydisplay", 1, true)
-            then
-                hookContainer(child)
-            end
-        end)
     end)
 end
 
 pcall(function()
     local pg = player:WaitForChild("PlayerGui", 5)
     if pg then
-        findAndHookDisplays(pg)
+        safeScan(pg)
         pg.ChildAdded:Connect(function(child)
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true) or n:find("keystroke", 1, true)
-            then hookContainer(child) end
+            task.wait(0.2)
+            safeScan(child)
         end)
     end
 end)
 
 pcall(function()
     local cg = game:GetService("CoreGui")
-    if cg then findAndHookDisplays(cg) end
+    if cg then safeScan(cg) end
 end)
 
 pcall(function()
     if typeof(gethui) == "function" then
         local h = gethui()
-        if h and h ~= game:GetService("CoreGui") then findAndHookDisplays(h) end
+        if h and h ~= game:GetService("CoreGui") then safeScan(h) end
     end
 end)
 
 pcall(function()
-    player.ChildAdded:Connect(function(child)
-        if child:IsA("PlayerGui") then findAndHookDisplays(child) end
-    end)
+    if typeof(getinstances) == "function" then
+        for _, obj in ipairs(getinstances()) do hookLabel(obj) end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(function()
+            if typeof(getinstances) == "function" then
+                for _, obj in ipairs(getinstances()) do hookLabel(obj) end
+            end
+        end)
+    end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -538,7 +520,7 @@ player.CharacterAdded:Connect(function(char)
     task.delay(0.5, function()
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
-            if pg then findAndHookDisplays(pg) end
+            if pg then safeScan(pg) end
         end)
     end)
 end)
@@ -815,76 +797,76 @@ end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
 
--- === Pre-Render Cached Sanitizer (Targeted: GlobalInputDisplay + KeystrokeDisplay only) ===
+-- === Pre-Render Cached Sanitizer (Broad scan, content-gated) ===
 local cachedLabels = {}
 local registeredLabels = {}
 
-local function isTargetToken(token)
-    if type(token) ~= "string" then return false end
-    local t = token:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+local BOOST_TARGETS = {
+    ["leftcontrol"] = true, ["left control"] = true,
+    ["leftctrl"] = true, ["left ctrl"] = true, ["lctrl"] = true,
+    ["rightcontrol"] = true, ["right control"] = true,
+    ["rightctrl"] = true, ["right ctrl"] = true, ["rctrl"] = true,
+    ["dpadup"] = true, ["dpad up"] = true,
+    ["d-pad up"] = true, ["dpad-up"] = true,
+    ["up dpad"] = true, ["up d-pad"] = true,
+}
+
+local function isTargetToken(raw)
+    if type(raw) ~= "string" then return false end
+    local t = raw:gsub("^%s+", ""):gsub("%s+$", ""):lower()
     if t == "" then return false end
-
-    if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
-        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true)
-        or t:find("lctrl", 1, true)
-        or t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
-        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true)
-        or t:find("rctrl", 1, true)
-    then
+    if BOOST_TARGETS[t] then return true end
+    -- strip "key: " / "gamepad: " / "mouse: " / "touch: " prefix then check
+    local inner = t:match("^%a[%a%s%-_/]+:%s*(.+)$")
+    if inner and BOOST_TARGETS[inner] then return true end
+    -- fuzzy: (left|right) + control variants
+    if (t:find("left", 1, true) or t:find("right", 1, true)) and
+       (t:find("control", 1, true) or t:find("ctrl", 1, true)) then
         return true
     end
-
-    if (t:find("control", 1, true) or t:find("ctrl", 1, true)) and (t:find("left", 1, true) or t:find("right", 1, true)) then
+    -- dpad + up variants
+    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true) or t:find("d pad", 1, true))
+        and t:find("up", 1, true) then
         return true
     end
+    return false
+end
 
-    if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
-        or t:find("d-pad up", 1, true) or t:find("dpad-up", 1, true)
-        or t:find("up dpad", 1, true) or t:find("up d-pad", 1, true)
-    then
-        return true
-    end
-
-    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then
-        return true
-    end
-
-    if (t:find("gamepad", 1, true) or t:find("controller", 1, true)) and (t:find("dpad", 1, true) or t:find("d-pad", 1, true) or t:find("up", 1, true)) then
-        return true
-    end
-
+-- Only sanitize text that looks like a keystroke display entry
+local function isKeystrokeText(text)
+    local t = text:lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if t == "[ none ]" or t == "[none]" or t == "none" then return true end
+    -- starts with a known input prefix
+    if t:match("^key%s*:") or t:match("^gamepad%s*:")
+        or t:match("^mouse%s*:") or t:match("^touch%s*:")
+        or t:match("^button%s*:") or t:match("^axis%s*:")
+    then return true end
     return false
 end
 
 local function sanitizeText(text)
     if type(text) ~= "string" or text == "" then return text end
     if text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then return text end
+    if not isKeystrokeText(text) then return text end
 
     local tLow = text:lower():gsub("^%s+", ""):gsub("%s+$", "")
-    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" then
-        return text
-    end
+    if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" then return text end
 
-    local hasTarget = false
-    if tLow:find("control", 1, true) or tLow:find("ctrl", 1, true) or tLow:find("dpad", 1, true) or tLow:find("d-pad", 1, true) then
-        hasTarget = true
-    elseif (tLow:find("gamepad", 1, true) or tLow:find("controller", 1, true)) and tLow:find("up", 1, true) then
-        hasTarget = true
+    if not isTargetToken(text) then
+        local hasAny = false
+        for part in text:gmatch("[^%+,]+") do
+            if isTargetToken(part) then hasAny = true break end
+        end
+        if not hasAny then return text end
     end
-
-    if not hasTarget then return text end
 
     local delim = "  +  "
-    local splitPattern = "[^%+]+"
-    if text:find("%+", 1, true) then
-        delim = text:find("  %+  ") and "  +  " or " + "
-    elseif text:find(",", 1, true) then
-        splitPattern = "[^,]+"
+    if text:find(",", 1, true) and not text:find("%+", 1, true) then
         delim = text:find(", ") and ", " or ","
     end
 
     local clean = {}
-    for part in text:gmatch(splitPattern) do
+    for part in text:gmatch("[^%+,]+") do
         local pTrim = part:gsub("^%s+", ""):gsub("%s+$", "")
         if not isTargetToken(pTrim) and pTrim ~= "" then
             table.insert(clean, pTrim)
@@ -900,7 +882,7 @@ end
 
 local function hookLabel(lbl)
     if not lbl or registeredLabels[lbl] then return end
-    local ok = pcall(function()
+    pcall(function()
         if not (lbl:IsA("TextLabel") or lbl:IsA("TextButton") or lbl:IsA("TextBox")) then return end
         if lbl.Text == "ACTIVE INPUT MONITOR" or lbl.Text == "Keys Pressed" then return end
 
@@ -919,70 +901,52 @@ local function hookLabel(lbl)
     end)
 end
 
--- TARGETED: Only scan inside named display containers, never entire PlayerGui/CoreGui
-local function hookContainer(container)
+local function safeScan(container)
     if not container then return end
     pcall(function()
-        for _, desc in ipairs(container:GetDescendants()) do hookLabel(desc) end
+        for _, d in ipairs(container:GetDescendants()) do hookLabel(d) end
         container.DescendantAdded:Connect(hookLabel)
-    end)
-end
-
-local function findAndHookDisplays(root)
-    if not root then return end
-    pcall(function()
-        for _, child in ipairs(root:GetChildren()) do
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true)
-                or n:find("keystroke", 1, true)
-                or n:find("keydisplay", 1, true)
-            then
-                hookContainer(child)
-            end
-        end
-        root.ChildAdded:Connect(function(child)
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true)
-                or n:find("keystroke", 1, true)
-                or n:find("keydisplay", 1, true)
-            then
-                hookContainer(child)
-            end
-        end)
     end)
 end
 
 pcall(function()
     local pg = player:WaitForChild("PlayerGui", 5)
     if pg then
-        findAndHookDisplays(pg)
+        safeScan(pg)
         pg.ChildAdded:Connect(function(child)
-            local n = child.Name:lower()
-            if n == "globalinputdisplay" or n == "keystrokedisplay"
-                or n:find("inputdisplay", 1, true) or n:find("keystroke", 1, true)
-            then hookContainer(child) end
+            task.wait(0.2)
+            safeScan(child)
         end)
     end
 end)
 
 pcall(function()
     local cg = game:GetService("CoreGui")
-    if cg then findAndHookDisplays(cg) end
+    if cg then safeScan(cg) end
 end)
 
 pcall(function()
     if typeof(gethui) == "function" then
         local h = gethui()
-        if h and h ~= game:GetService("CoreGui") then findAndHookDisplays(h) end
+        if h and h ~= game:GetService("CoreGui") then safeScan(h) end
     end
 end)
 
 pcall(function()
-    player.ChildAdded:Connect(function(child)
-        if child:IsA("PlayerGui") then findAndHookDisplays(child) end
-    end)
+    if typeof(getinstances) == "function" then
+        for _, obj in ipairs(getinstances()) do hookLabel(obj) end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(function()
+            if typeof(getinstances) == "function" then
+                for _, obj in ipairs(getinstances()) do hookLabel(obj) end
+            end
+        end)
+    end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -1008,7 +972,7 @@ player.CharacterAdded:Connect(function(char)
     task.delay(0.5, function()
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
-            if pg then findAndHookDisplays(pg) end
+            if pg then safeScan(pg) end
         end)
     end)
 end)
