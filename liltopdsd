@@ -288,7 +288,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
 end))
 
 -- Tuned downward further for balanced, natural jump trajectory
-local SMOOTH_UPWARD_CURVE = {6.9, 5.7, 4.6, 3.5, 2.4, 1.4, 0.6}
+local SMOOTH_UPWARD_CURVE = {7.8, 6.5, 5.3, 4.1, 2.9, 1.8, 0.8}
 local function ExecuteBoost()
     if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
     local now = os.clock()
@@ -720,7 +720,7 @@ TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
 end))
 
 -- Tuned downward further for balanced, natural jump trajectory
-local SMOOTH_UPWARD_CURVE = {6.9, 5.7, 4.6, 3.5, 2.4, 1.4, 0.6}
+local SMOOTH_UPWARD_CURVE = {7.8, 6.5, 5.3, 4.1, 2.9, 1.8, 0.8}
 local function ExecuteBoost()
     if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
     local now = os.clock()
