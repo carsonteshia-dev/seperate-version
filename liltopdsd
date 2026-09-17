@@ -396,14 +396,17 @@ local function isTargetToken(token)
 end
 
 local function sanitizeText(text)
-    if type(text) ~= "string" or text == "" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
-        return ""
+    if type(text) ~= "string" or text == "" then
+        return text
+    end
+    if text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return text
     end
 
     local tTrim = text:gsub("^%%s+", ""):gsub("%%s+$", "")
     local tLow = tTrim:lower()
     if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
-        return ""
+        return text
     end
 
     local hasTarget = false
@@ -440,7 +443,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return ""
+        return "[ None ]"
     else
         return table.concat(clean, delim)
     end
@@ -894,14 +897,17 @@ local function isTargetToken(token)
 end
 
 local function sanitizeText(text)
-    if type(text) ~= "string" or text == "" or text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
-        return ""
+    if type(text) ~= "string" or text == "" then
+        return text
+    end
+    if text == "ACTIVE INPUT MONITOR" or text == "Keys Pressed" then
+        return text
     end
 
     local tTrim = text:gsub("^%s+", ""):gsub("%s+$", "")
     local tLow = tTrim:lower()
     if tLow == "[ none ]" or tLow == "none" or tLow == "[none]" or tLow == "nil" or tLow == "[ nil ]" then
-        return ""
+        return text
     end
 
     local hasTarget = false
@@ -938,7 +944,7 @@ local function sanitizeText(text)
     end
 
     if #clean == 0 then
-        return ""
+        return "[ None ]"
     else
         return table.concat(clean, delim)
     end
