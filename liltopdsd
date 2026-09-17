@@ -15,7 +15,6 @@ pcall(function()
             or m:find("coregui.26628", 1, true) ~= nil
     end
 
-    -- Intercept GetLogHistory to filter out engine localization syntax errors
     local function FilterHistory(hist)
         if type(hist) ~= "table" then return hist end
         local clean = {}
@@ -66,7 +65,6 @@ pcall(function()
         -- silences localized missing argument logging
     end)
 
-    -- Live Developer Console Purge
     local function CleanConsoleUI()
         pcall(function()
             local devConsole = CoreGui:FindFirstChild("DevConsoleMaster") or CoreGui:FindFirstChild("DeveloperConsole")
@@ -141,6 +139,7 @@ if not game:IsLoaded() then pcall(function() game.Loaded:Wait() end) end
 local Players = game:GetService("Players")
 repeat task.wait(0.1) until Players.LocalPlayer
 local LocalPlayer = Players.LocalPlayer
+local player = LocalPlayer
 
 local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport or queue_for_teleport
 if q then pcall(function() q(string.format(s, s)) end) end
@@ -159,6 +158,164 @@ local function CheckInjected()
     end)
     return ok and res
 end
+
+
+local RunService = game:GetService("RunService")
+
+-- Keybind Masking — Unmask-Resistant (Teleport-persistent)
+local monitoredLabels = {}
+local cachedLabelList = {}
+local lastLegitText = {}
+
+local function isMaskedText(text)
+    if type(text) ~= "string" or text == "" then return false end
+    local t = text:lower()
+    if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
+        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true) then return true end
+    if t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
+        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true) then return true end
+    if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
+        or t:find("d-pad up", 1, true) or t:find("up dpad", 1, true) then return true end
+    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then return true end
+    return false
+end
+
+local function enforceMask(label)
+    if not label or not label.Parent then return end
+    local ok, cur = pcall(function() return label.Text end)
+    if not ok then return end
+    if isMaskedText(cur) then
+        pcall(function() label.Text = lastLegitText[label] or "" end)
+    else
+        if cur ~= "" then lastLegitText[label] = cur end
+    end
+end
+
+local function isRobloxMenuDescendant(desc)
+    local r = false
+    pcall(function()
+        local rGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+        if rGui and desc:IsDescendantOf(rGui) then r = true end
+    end)
+    return r
+end
+
+local function trackLabel(desc)
+    if not desc then return end
+    pcall(function()
+        if not (desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox")) then return end
+        if desc.Name == "Title" then return end
+        if isRobloxMenuDescendant(desc) then return end
+        if monitoredLabels[desc] then return end
+        monitoredLabels[desc] = true
+        table.insert(cachedLabelList, desc)
+        local t = desc.Text
+        if t and t ~= "" and not isMaskedText(t) then lastLegitText[desc] = t end
+        desc:GetPropertyChangedSignal("Text"):Connect(function() enforceMask(desc) end)
+        enforceMask(desc)
+    end)
+end
+
+local function watchContainer(container)
+    if not container then return end
+    pcall(function()
+        for _, d in ipairs(container:GetDescendants()) do pcall(trackLabel, d) end
+        container.DescendantAdded:Connect(function(d) pcall(trackLabel, d) end)
+        container.DescendantRemoving:Connect(function(d)
+            monitoredLabels[d] = nil
+            lastLegitText[d] = nil
+        end)
+    end)
+end
+
+-- Immediate synchronous scan (mobile + desktop)
+pcall(function()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        watchContainer(pg)
+        -- Hook for ScreenGuis added after execute (e.g. GlobalInputDisplay)
+        pg.ChildAdded:Connect(function(child)
+            task.wait(0.05)
+            pcall(watchContainer, child)
+        end)
+    end
+end)
+pcall(function()
+    if typeof(gethui) == "function" then watchContainer(gethui()) end
+end)
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    if cg then
+        for _, child in ipairs(cg:GetChildren()) do
+            if child.Name ~= "RobloxGui" then pcall(watchContainer, child) end
+        end
+        cg.ChildAdded:Connect(function(child)
+            if child.Name ~= "RobloxGui" then
+                task.wait(0.05)
+                pcall(watchContainer, child)
+            end
+        end)
+    end
+end)
+
+-- Deferred for late-loading PlayerGui (mobile can be slow)
+task.spawn(function()
+    pcall(function()
+        local pg = LocalPlayer:WaitForChild("PlayerGui", 5)
+        if pg then
+            watchContainer(pg)
+            pg.ChildAdded:Connect(function(child)
+                task.wait(0.05)
+                pcall(watchContainer, child)
+            end)
+        end
+    end)
+    pcall(function()
+        if typeof(gethui) == "function" then watchContainer(gethui()) end
+    end)
+end)
+
+RunService.RenderStepped:Connect(function()
+    for i = #cachedLabelList, 1, -1 do
+        local label = cachedLabelList[i]
+        if label and label.Parent then
+            enforceMask(label)
+        else
+            monitoredLabels[label] = nil
+            lastLegitText[label] = nil
+            table.remove(cachedLabelList, i)
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    for i = 1, #cachedLabelList do
+        local label = cachedLabelList[i]
+        if label and label.Parent then
+            local ok, t = pcall(function() return label.Text end)
+            if ok and isMaskedText(t) then
+                pcall(function() label.Text = lastLegitText[label] or "" end)
+            end
+        end
+    end
+end)
+
+pcall(function()
+    if typeof(hookmetamethod) ~= "function" then return end
+    local old_ni
+    old_ni = hookmetamethod(game, "__newindex", function(self, key, value)
+        if key == "Text" and monitoredLabels[self] then
+            local v = tostring(value)
+            if isMaskedText(v) then
+                return old_ni(self, key, lastLegitText[self] or "")
+            else
+                if v ~= "" then lastLegitText[self] = v end
+            end
+        end
+        return old_ni(self, key, value)
+    end)
+end)
+
 
 if not CheckInjected() and not _G.ShystxFlagsApplied then return end
 
@@ -273,11 +430,15 @@ pcall(function()
     TrySetFlag("FIntSimDefaultFluidForceEnabled", 999)
 end)
 
-local isArmed, armedExpiration, lastBoostTime = true, math.huge, 0
+local isArmed = true
+local lastBoostTime = 0
+local lastToggleTime = 0
 local function ToggleBoost()
     if _G.ShystxFlagsApplied ~= true then return end
+    local now = os.clock()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
     _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
-    if not _G.ShystxBoostEnabled then isArmed = false end
 end
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
@@ -288,13 +449,13 @@ TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
     end
 end))
 
--- Tuned downward slightly for smoother jump curve
-local SMOOTH_UPWARD_CURVE = {7.8, 6.6, 5.4, 4.2, 3.0, 1.8, 0.8}
+-- Tuned downward further for balanced, natural jump trajectory
+local SMOOTH_UPWARD_CURVE = {9.0, 7.6, 6.2, 4.8, 3.3, 1.9, 0.8}
 local function ExecuteBoost()
     if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
+    if not isArmed then return end
     local now = os.clock()
-    if not isArmed or (now > armedExpiration) then isArmed = false; return end
-    if now - lastBoostTime < 0.35 then return end
+    if now - lastBoostTime < 0.4 then return end
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
@@ -314,6 +475,13 @@ local function ExecuteBoost()
         end
         _G.ShystxIsBoosting = false
     end)
+    -- Failsafe: re-arm after 1.5s in case StateChanged misses Landed/Running
+    task.delay(1.5, function()
+        if _G.ShystxCurrentSession == thisSession then
+            _G.ShystxIsBoosting = false
+            isArmed = true
+        end
+    end)
 end
 
 local function TryTriggerBoost()
@@ -323,16 +491,21 @@ local function TryTriggerBoost()
 end
 
 local charConns = {}
-local function SetupCharacter(char)
+local function setupCharacter(char)
     if not char or _G.ShystxCurrentSession ~= thisSession then return end
     for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
     charConns = {}
     local hum = char:WaitForChild("Humanoid", 5)
     if not hum then return end
     local sc = hum.StateChanged:Connect(function(_, st)
-        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then
+        if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
             TryTriggerBoost()
-        elseif (st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.Running) then
+        elseif st == Enum.HumanoidStateType.Landed
+            or st == Enum.HumanoidStateType.Running
+            or st == Enum.HumanoidStateType.RunningNoPhysics
+            or st == Enum.HumanoidStateType.Walking
+            or st == Enum.HumanoidStateType.GettingUp
+        then
             isArmed = true
             _G.ShystxIsBoosting = false
         end
@@ -345,6 +518,8 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
+
+
 if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
 TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
 ]==]
@@ -441,6 +616,7 @@ end
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local player = LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -546,11 +722,15 @@ local function TrackConn(c)
 end
 
 -- Jump Boost Logic (Runs only when _G.ShystxFlagsApplied == true)
-local isArmed, armedExpiration, lastBoostTime = true, math.huge, 0
+local isArmed = true
+local lastBoostTime = 0
+local lastToggleTime = 0
 local function ToggleBoost()
     if _G.ShystxFlagsApplied ~= true then return end
+    local now = os.clock()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
     _G.ShystxBoostEnabled = not _G.ShystxBoostEnabled
-    if not _G.ShystxBoostEnabled then isArmed = false end
 end
 
 TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
@@ -561,13 +741,13 @@ TrackConn(UserInputService.InputBegan:Connect(function(inp, gpe)
     end
 end))
 
--- Tuned downward slightly for smoother, balanced upward curve
-local SMOOTH_UPWARD_CURVE = {7.8, 6.6, 5.4, 4.2, 3.0, 1.8, 0.8}
+-- Tuned downward further for balanced, natural jump trajectory
+local SMOOTH_UPWARD_CURVE = {9.0, 7.6, 6.2, 4.8, 3.3, 1.9, 0.8}
 local function ExecuteBoost()
     if _G.ShystxCurrentSession ~= thisSession or _G.ShystxBoostEnabled ~= true or _G.ShystxFlagsApplied ~= true or _G.ShystxIsBoosting then return end
+    if not isArmed then return end
     local now = os.clock()
-    if not isArmed or (now > armedExpiration) then isArmed = false; return end
-    if now - lastBoostTime < 0.35 then return end
+    if now - lastBoostTime < 0.4 then return end
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
@@ -587,6 +767,13 @@ local function ExecuteBoost()
         end
         _G.ShystxIsBoosting = false
     end)
+    -- Failsafe: re-arm after 1.5s in case StateChanged misses Landed/Running
+    task.delay(1.5, function()
+        if _G.ShystxCurrentSession == thisSession then
+            _G.ShystxIsBoosting = false
+            isArmed = true
+        end
+    end)
 end
 
 local function TryTriggerBoost()
@@ -596,16 +783,21 @@ local function TryTriggerBoost()
 end
 
 local charConns = {}
-local function SetupCharacter(char)
+local function setupCharacter(char)
     if not char or _G.ShystxCurrentSession ~= thisSession then return end
     for _, c in ipairs(charConns) do if c and c.Disconnect then c:Disconnect() end end
     charConns = {}
     local hum = char:WaitForChild("Humanoid", 5)
     if not hum then return end
     local sc = hum.StateChanged:Connect(function(_, st)
-        if (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then
+        if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
             TryTriggerBoost()
-        elseif (st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.Running) then
+        elseif st == Enum.HumanoidStateType.Landed
+            or st == Enum.HumanoidStateType.Running
+            or st == Enum.HumanoidStateType.RunningNoPhysics
+            or st == Enum.HumanoidStateType.Walking
+            or st == Enum.HumanoidStateType.GettingUp
+        then
             isArmed = true
             _G.ShystxIsBoosting = false
         end
@@ -618,84 +810,199 @@ local function SetupCharacter(char)
 end
 
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
-if LocalPlayer.Character then task.spawn(SetupCharacter, LocalPlayer.Character) end
-TrackConn(LocalPlayer.CharacterAdded:Connect(SetupCharacter))
 
--- Keybind Masking (Strictly preserves CoreGui.RobloxGui to never break Escape Menu)
-local monitoredLabels = {}
+-- Keybind Masking — Unmask-Resistant
+-- Triple-layer enforcement: hookmetamethod(__newindex) + RenderStepped + Heartbeat
+-- Skips CoreGui.RobloxGui entirely so Escape Menu is never affected
+-- Uses array-based cache for O(n) iteration with no pairs() overhead
+local monitoredLabels = {}  -- set for O(1) lookup
+local cachedLabelList = {}  -- ordered array for fast iteration
 local lastLegitText = {}
+
 local function isMaskedText(text)
-    if type(text) ~= "string" then return false end
-    if text:find("[dD]%-?[pP][aA][dD]%s*[_%-]?%s*[uU][pP]") then return true end
-    if text:find("[lL]eft%s*[cC]ontrol") or text:find("[rR]ight%s*[cC]ontrol") or text:find("[lL]eft%s*[cC]trl") or text:find("[rR]ight%s*[cC]trl") then return true end
+    if type(text) ~= "string" or text == "" then return false end
+    local t = text:lower()
+    if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
+        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true)
+        or t:find("lctrl", 1, true)
+    then return true end
+    if t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
+        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true)
+        or t:find("rctrl", 1, true)
+    then return true end
+    if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
+        or t:find("d-pad up", 1, true) or t:find("dpad-up", 1, true)
+        or t:find("up dpad", 1, true) or t:find("up d-pad", 1, true)
+    then return true end
+    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then
+        return true
+    end
     return false
 end
 
-local function cleanText(label)
-    local text = label.Text
-    if isMaskedText(text) then
-        label.Text = lastLegitText[label] or "Press any key or controller button..."
+local function enforceMask(label)
+    if not label or not label.Parent then return end
+    local ok, currentText = pcall(function() return label.Text end)
+    if not ok then return end
+    if isMaskedText(currentText) then
+        pcall(function() label.Text = lastLegitText[label] or "" end)
     else
-        lastLegitText[label] = text
+        if currentText ~= "" then lastLegitText[label] = currentText end
     end
 end
 
+local function isRobloxMenuDescendant(desc)
+    local result = false
+    pcall(function()
+        local rGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+        if rGui and desc:IsDescendantOf(rGui) then result = true end
+    end)
+    return result
+end
+
 local function trackLabel(desc)
-    if desc:IsA("TextLabel") and desc.Name ~= "Title" then
-        local isRobloxMenu = false
-        pcall(function()
-            local rGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
-            if rGui and desc:IsDescendantOf(rGui) then isRobloxMenu = true end
-        end)
-        if isRobloxMenu then return end
+    if not desc then return end
+    local ok = pcall(function()
+        if not (desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox")) then return end
+        if desc.Name == "Title" then return end
+        if isRobloxMenuDescendant(desc) then return end
+        if monitoredLabels[desc] then return end
+
         monitoredLabels[desc] = true
-        lastLegitText[desc] = desc.Text
-        desc:GetPropertyChangedSignal("Text"):Connect(function() cleanText(desc) end)
-        cleanText(desc)
-    end
+        table.insert(cachedLabelList, desc)
+        local t = desc.Text
+        if t and t ~= "" and not isMaskedText(t) then lastLegitText[desc] = t end
+
+        desc:GetPropertyChangedSignal("Text"):Connect(function()
+            enforceMask(desc)
+        end)
+        enforceMask(desc)
+    end)
 end
 
 local function watchContainer(container)
     if not container then return end
-    for _, desc in ipairs(container:GetDescendants()) do trackLabel(desc) end
-    container.DescendantAdded:Connect(trackLabel)
-    container.DescendantRemoving:Connect(function(desc)
-        monitoredLabels[desc] = nil
-        lastLegitText[desc] = nil
+    pcall(function()
+        for _, desc in ipairs(container:GetDescendants()) do pcall(trackLabel, desc) end
+        container.DescendantAdded:Connect(function(d) pcall(trackLabel, d) end)
+        container.DescendantRemoving:Connect(function(desc)
+            monitoredLabels[desc] = nil
+            lastLegitText[desc] = nil
+            -- Array cleanup handled by the enforcement loop
+        end)
     end)
 end
 
+-- Immediate synchronous scan (mobile + desktop)
+pcall(function()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        watchContainer(pg)
+        -- Catch ScreenGuis added after execute (GlobalInputDisplay, KeystrokeDisplay, etc.)
+        pg.ChildAdded:Connect(function(child)
+            task.wait(0.05)
+            pcall(watchContainer, child)
+        end)
+    end
+end)
+pcall(function()
+    if typeof(gethui) == "function" then watchContainer(gethui()) end
+end)
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    if cg then
+        for _, child in ipairs(cg:GetChildren()) do
+            if child.Name ~= "RobloxGui" then pcall(watchContainer, child) end
+        end
+        cg.ChildAdded:Connect(function(child)
+            if child.Name ~= "RobloxGui" then
+                task.wait(0.05)
+                pcall(watchContainer, child)
+            end
+        end)
+    end
+end)
+
+-- Deferred scan (mobile PlayerGui can load late)
 task.spawn(function()
-    pcall(function() watchContainer(LocalPlayer:WaitForChild("PlayerGui", 5)) end)
+    pcall(function()
+        local pg = LocalPlayer:WaitForChild("PlayerGui", 5)
+        if pg then
+            watchContainer(pg)
+            pg.ChildAdded:Connect(function(child)
+                task.wait(0.05)
+                pcall(watchContainer, child)
+            end)
+        end
+    end)
     pcall(function()
         if typeof(gethui) == "function" then watchContainer(gethui()) end
     end)
 end)
 
+-- Layer 1: RenderStepped (every frame, pre-render)
 TrackConn(RunService.RenderStepped:Connect(function()
-    for label in pairs(monitoredLabels) do
+    for i = #cachedLabelList, 1, -1 do
+        local label = cachedLabelList[i]
         if label and label.Parent then
-            cleanText(label)
+            enforceMask(label)
         else
             monitoredLabels[label] = nil
             lastLegitText[label] = nil
+            table.remove(cachedLabelList, i)
         end
     end
 end))
 
--- GUI Setup
+-- Layer 2: Heartbeat (physics step — lightweight, only acts on violations)
+TrackConn(RunService.Heartbeat:Connect(function()
+    for i = 1, #cachedLabelList do
+        local label = cachedLabelList[i]
+        if label and label.Parent then
+            local ok, t = pcall(function() return label.Text end)
+            if ok and isMaskedText(t) then
+                pcall(function() label.Text = lastLegitText[label] or "" end)
+            end
+        end
+    end
+end))
+
+-- Layer 3: hookmetamethod __newindex — intercepts raw property writes from unmask tools
+-- When any code does label.Text = "Key: LeftControl", we catch it here and substitute
+pcall(function()
+    if typeof(hookmetamethod) ~= "function" then return end
+    local old_ni
+    old_ni = hookmetamethod(game, "__newindex", function(self, key, value)
+        if key == "Text" and monitoredLabels[self] then
+            local v = tostring(value)
+            if isMaskedText(v) then
+                -- Silently redirect to last legit value — masked text never reaches the label
+                return old_ni(self, key, lastLegitText[self] or "")
+            else
+                if v ~= "" then lastLegitText[self] = v end
+            end
+        end
+        return old_ni(self, key, value)
+    end)
+end)
+
+-- GUI Setup & Design Theme
 local C = {
     Bg = Color3.fromRGB(15, 17, 23),
     TopBar = Color3.fromRGB(22, 25, 35),
     Border = Color3.fromRGB(38, 43, 60),
+    BorderHover = Color3.fromRGB(58, 65, 90),
     Cyan = Color3.fromRGB(0, 225, 255),
-    CyanHover = Color3.fromRGB(50, 235, 255),
+    CyanHover = Color3.fromRGB(60, 235, 255),
     Green = Color3.fromRGB(0, 230, 118),
+    GreenHover = Color3.fromRGB(40, 245, 140),
     Red = Color3.fromRGB(255, 75, 75),
+    RedHover = Color3.fromRGB(255, 100, 100),
     RowBg = Color3.fromRGB(20, 23, 32),
+    RowHover = Color3.fromRGB(27, 32, 45),
     ListBg = Color3.fromRGB(11, 13, 18),
     BtnBg = Color3.fromRGB(26, 30, 42),
-    BtnHover = Color3.fromRGB(36, 42, 58),
+    BtnHover = Color3.fromRGB(38, 44, 62),
     TextWhite = Color3.fromRGB(240, 243, 246),
     TextDim = Color3.fromRGB(130, 138, 155),
     TextMuted = Color3.fromRGB(80, 88, 105),
@@ -715,15 +1022,20 @@ end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local UiScale = Instance.new("UIScale", ScreenGui)
-local function UpdateScale()
+local function GetTargetScale()
     local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
-    UiScale.Scale = math.clamp(math.min(vp.X / 1280, vp.Y / 720), 0.75, 1.25)
+    return math.clamp(math.min(vp.X / 1280, vp.Y / 720), 0.75, 1.25)
+end
+local function UpdateScale()
+    UiScale.Scale = GetTargetScale()
 end
 UpdateScale()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(UpdateScale)
 
-local function Tween(obj, props, dur)
-    local tw = TweenService:Create(obj, TweenInfo.new(dur or 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
+-- Unified Smooth Animation Helper
+local function Tween(obj, props, dur, style, dir)
+    local info = TweenInfo.new(dur or 0.15, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
+    local tw = TweenService:Create(obj, info, props)
     tw:Play()
     return tw
 end
@@ -778,6 +1090,7 @@ local function Txt(parent, text, size, pos, col, font, align, z)
     return l
 end
 
+-- Animated Button with Interactive Hover & Press Tweens
 local function Btn(parent, text, size, pos, bg, col, fn, z)
     local b = Instance.new("TextButton", parent)
     b.Size = size or UDim2.new(0, 80, 0, 30)
@@ -791,7 +1104,29 @@ local function Btn(parent, text, size, pos, bg, col, fn, z)
     b.AutoButtonColor = false
     b.ZIndex = z or 12
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-    Stroke(b, bg == C.Cyan and C.Cyan or C.Border)
+    local st = Stroke(b, bg == C.Cyan and C.Cyan or C.Border)
+    
+    local isPrimary = (bg == C.Cyan)
+    local isDanger = (col == C.Red)
+    local defBg = bg or C.BtnBg
+    local hovBg = isPrimary and C.CyanHover or (isDanger and Color3.fromRGB(45, 24, 28) or C.BtnHover)
+    local hovStroke = isPrimary and Color3.fromRGB(120, 245, 255) or (isDanger and C.RedHover or C.BorderHover)
+
+    b.MouseEnter:Connect(function()
+        Tween(b, {BackgroundColor3 = hovBg}, 0.12)
+        Tween(st, {Color = hovStroke}, 0.12)
+    end)
+    b.MouseLeave:Connect(function()
+        Tween(b, {BackgroundColor3 = defBg}, 0.12)
+        Tween(st, {Color = isPrimary and C.Cyan or C.Border}, 0.12)
+    end)
+    b.MouseButton1Down:Connect(function()
+        Tween(b, {Size = UDim2.new(size.X.Scale, size.X.Offset - 2, size.Y.Scale, size.Y.Offset - 2)}, 0.08)
+    end)
+    b.MouseButton1Up:Connect(function()
+        Tween(b, {Size = size}, 0.08)
+    end)
+
     if fn then OnClick(b, fn) end
     return b
 end
@@ -808,14 +1143,20 @@ local function Box(parent, ph, size, pos, z)
     b.ClearTextOnFocus = false
     b.ZIndex = z or 32
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-    Stroke(b, C.Border)
+    local st = Stroke(b, C.Border)
+    b.Focused:Connect(function() Tween(st, {Color = C.Cyan}, 0.15) end)
+    b.FocusLost:Connect(function() Tween(st, {Color = C.Border}, 0.15) end)
     return b
 end
 
--- Main Window
+-- Main Window with Opening Animation
 local Main = Card(ScreenGui, UDim2.new(0, 480, 0, 360), UDim2.new(0.5, -240, 0.5, -180), C.Bg, 8, 10)
 Main.ClipsDescendants = true
 Stroke(Main, C.Border)
+
+-- Smooth Window Entry Pop-In
+UiScale.Scale = 0.01
+Tween(UiScale, {Scale = GetTargetScale()}, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 -- Top Bar
 local TopBar = Card(Main, UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 0), C.TopBar, 0, 11)
@@ -823,6 +1164,10 @@ Stroke(TopBar, C.Border)
 Txt(TopBar, "FASTFLAG MANAGER", UDim2.new(1, -80, 1, 0), UDim2.new(0, 12, 0, 0), C.Cyan, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 12)
 local ClsBtn = Btn(TopBar, "X", UDim2.new(0, 24, 0, 24), UDim2.new(1, -28, 0.5, -12), C.BtnBg, C.TextDim, nil, 12)
 local MinBtn = Btn(TopBar, "-", UDim2.new(0, 24, 0, 24), UDim2.new(1, -56, 0.5, -12), C.BtnBg, C.TextDim, nil, 12)
+
+-- Animated Close Button Special Hover
+ClsBtn.MouseEnter:Connect(function() Tween(ClsBtn, {BackgroundColor3 = Color3.fromRGB(200, 45, 55), TextColor3 = C.TextWhite}, 0.12) end)
+ClsBtn.MouseLeave:Connect(function() Tween(ClsBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TextDim}, 0.12) end)
 
 -- Tabs
 local TabBar = Card(Main, UDim2.new(1, -24, 0, 30), UDim2.new(0, 12, 0, 44), C.ListBg, 4, 11)
@@ -864,15 +1209,18 @@ SavedLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     SavedView.CanvasSize = UDim2.new(0, 0, 0, SavedLayout.AbsoluteContentSize.Y + 8)
 end)
 
+-- Smooth Animated Tab Switching
 local function SwitchTab(tab)
     if tab == "Active" then
-        ActiveView.Visible = true; SavedView.Visible = false
-        Tween(ActiveTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.12)
-        Tween(SavedTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.12)
+        ActiveView.Visible = true
+        SavedView.Visible = false
+        Tween(ActiveTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.15)
+        Tween(SavedTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.15)
     else
-        ActiveView.Visible = false; SavedView.Visible = true
-        Tween(SavedTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.12)
-        Tween(ActiveTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.12)
+        ActiveView.Visible = false
+        SavedView.Visible = true
+        Tween(SavedTabBtn, {BackgroundColor3 = C.TabActive, TextColor3 = C.Cyan, BackgroundTransparency = 0}, 0.15)
+        Tween(ActiveTabBtn, {BackgroundTransparency = 1, TextColor3 = C.TextDim}, 0.15)
     end
 end
 OnClick(ActiveTabBtn, function() SwitchTab("Active") end)
@@ -897,20 +1245,33 @@ local EditFlagsBtn = Btn(BottomBar, "Edit Flags", UDim2.new(0, 80, 0, 32), nil, 
 local ClearBtn = Btn(BottomBar, "Clear", UDim2.new(0, 64, 0, 32), nil, C.BtnBg, C.TextWhite, nil, 12)
 local InjectBtn = Btn(BottomBar, "Inject", UDim2.new(0, 80, 0, 32), nil, C.Cyan, Color3.fromRGB(10, 15, 20), nil, 12)
 
--- Modals
+-- Animated Modals Builder with Pop-In and Dismiss Tweens
 local function MakeModal(w, h, titleText, closeFn)
-    local panel = Card(ScreenGui, UDim2.new(0, w, 0, h), UDim2.new(0.5, -w/2, 0.5, -h/2), C.Bg, 8, 30)
+    local panel = Card(ScreenGui, UDim2.new(0, w, 0, h), UDim2.new(0.5, -w/2, 0.5, -h/2 + 10), C.Bg, 8, 30)
     panel.Visible = false
-    Stroke(panel, C.Border)
+    local st = Stroke(panel, C.Border)
     local head = Card(panel, UDim2.new(1, 0, 0, 34), UDim2.new(0, 0, 0, 0), C.TopBar, 0, 31)
     Stroke(head, C.Border)
     Txt(head, titleText, UDim2.new(1, -40, 1, 0), UDim2.new(0, 10, 0, 0), C.Cyan, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 32)
-    Btn(head, "X", UDim2.new(0, 22, 0, 22), UDim2.new(1, -28, 0.5, -11), C.BtnBg, C.TextDim, function() closeFn(panel) end, 32)
+    local closeBtn = Btn(head, "X", UDim2.new(0, 22, 0, 22), UDim2.new(1, -28, 0.5, -11), C.BtnBg, C.TextDim, function() closeFn(panel) end, 32)
+    closeBtn.MouseEnter:Connect(function() Tween(closeBtn, {BackgroundColor3 = Color3.fromRGB(200, 45, 55), TextColor3 = C.TextWhite}, 0.12) end)
+    closeBtn.MouseLeave:Connect(function() Tween(closeBtn, {BackgroundColor3 = C.BtnBg, TextColor3 = C.TextDim}, 0.12) end)
     return panel
 end
 
+local function OpenModalAnimated(p, w, h)
+    p.Position = UDim2.new(0.5, -w/2, 0.5, -h/2 + 12)
+    p.Visible = true
+    Tween(p, {Position = UDim2.new(0.5, -w/2, 0.5, -h/2)}, 0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+end
+
+local function CloseModalAnimated(p, w, h)
+    local tw = Tween(p, {Position = UDim2.new(0.5, -w/2, 0.5, -h/2 + 12)}, 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    tw.Completed:Connect(function() p.Visible = false end)
+end
+
 -- Import Modal
-local ImportPanel = MakeModal(440, 280, "Import FastFlags (JSON or Raw Text)", function(p) p.Visible = false end)
+local ImportPanel = MakeModal(440, 280, "Import FastFlags (JSON or Raw Text)", function(p) CloseModalAnimated(p, 440, 280) end)
 local ImportBox = Box(ImportPanel, "Paste JSON or FlagKey:Value pairs here...", UDim2.new(1, -20, 0, 175), UDim2.new(0, 10, 0, 44), 32)
 ImportBox.MultiLine = true
 ImportBox.TextXAlignment = Enum.TextXAlignment.Left
@@ -919,13 +1280,13 @@ local PasteClipboardBtn = Btn(ImportPanel, "Paste Clipboard", UDim2.new(0, 120, 
 local ApplyImportBtn = Btn(ImportPanel, "Apply Flags", UDim2.new(0, 100, 0, 30), UDim2.new(1, -110, 1, -40), C.Cyan, Color3.fromRGB(10, 15, 20), nil, 32)
 
 -- Save Config Modal
-local SaveConfigPanel = MakeModal(380, 150, "Save Active Config", function(p) p.Visible = false end)
+local SaveConfigPanel = MakeModal(380, 150, "Save Active Config", function(p) CloseModalAnimated(p, 380, 150) end)
 local CfgNameBox = Box(SaveConfigPanel, "Config name (e.g. MySetup)", UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 0, 50), 32)
-local CancelSaveBtn = Btn(SaveConfigPanel, "Cancel", UDim2.new(0, 80, 0, 28), UDim2.new(1, -180, 1, -38), C.BtnBg, C.TextDim, function() SaveConfigPanel.Visible = false end, 32)
+local CancelSaveBtn = Btn(SaveConfigPanel, "Cancel", UDim2.new(0, 80, 0, 28), UDim2.new(1, -180, 1, -38), C.BtnBg, C.TextDim, function() CloseModalAnimated(SaveConfigPanel, 380, 150) end, 32)
 local ConfirmSaveBtn = Btn(SaveConfigPanel, "Save", UDim2.new(0, 80, 0, 28), UDim2.new(1, -90, 1, -38), C.Cyan, Color3.fromRGB(10, 15, 20), nil, 32)
 
 -- Live Edit Modal
-local EditPanel = MakeModal(480, 340, "Live Flag Value Editor", function(p) p.Visible = false end)
+local EditPanel = MakeModal(480, 340, "Live Flag Value Editor", function(p) CloseModalAnimated(p, 480, 340) end)
 local EditSearchBox = Box(EditPanel, "Search active flags...", UDim2.new(1, -20, 0, 28), UDim2.new(0, 10, 0, 42), 32)
 local EditScroll = Instance.new("ScrollingFrame", EditPanel)
 EditScroll.Size = UDim2.new(1, -20, 0, 240)
@@ -943,17 +1304,24 @@ EditLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     EditScroll.CanvasSize = UDim2.new(0, 0, 0, EditLayout.AbsoluteContentSize.Y + 8)
 end)
 
--- Toast Notification
+-- Animated Dynamic Expanding Toast Notification
 local function ShowToast(msg, color)
-    local t = Card(ScreenGui, UDim2.new(0, 280, 0, 28), UDim2.new(0.5, -140, 1, -85), C.TopBar, 4, 50)
-    Stroke(t, color or C.Cyan)
-    Txt(t, msg, UDim2.new(1, 0, 1, 0), nil, color or C.Cyan, Enum.Font.GothamBold, Enum.TextXAlignment.Center, 51)
+    local tCol = color or C.Cyan
+    local t = Card(ScreenGui, UDim2.new(0, 0, 0, 28), UDim2.new(0.5, 0, 1, -85), C.TopBar, 6, 50)
+    t.ClipsDescendants = true
+    local st = Stroke(t, tCol)
+    local l = Txt(t, msg, UDim2.new(1, -16, 1, 0), UDim2.new(0, 8, 0, 0), tCol, Enum.Font.GothamBold, Enum.TextXAlignment.Center, 51)
+    
+    local targetW = math.clamp(l.TextBounds.X + 32, 160, 380)
+    Tween(t, {Size = UDim2.new(0, targetW, 0, 28), Position = UDim2.new(0.5, -targetW/2, 1, -85)}, 0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    
     task.delay(2.2, function()
-        Tween(t, {BackgroundTransparency = 1}, 0.3).Completed:Connect(function() t:Destroy() end)
+        local tw = Tween(t, {Size = UDim2.new(0, 0, 0, 28), Position = UDim2.new(0.5, 0, 1, -85)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        tw.Completed:Connect(function() t:Destroy() end)
     end)
 end
 
--- Refresh Lists
+-- Refresh Lists with Animated Row Transitions
 local isRefreshing = false
 local function RefreshLists()
     if isRefreshing then return end
@@ -980,7 +1348,16 @@ local function RefreshLists()
             local dotCol = _G.ShystxFlagsApplied and (isTrue and C.Green or (isFalse and C.Red or C.Cyan)) or C.TextMuted
 
             local row = Card(ActiveView, UDim2.new(1, -8, 0, 26), nil, C.RowBg, 4, 12)
-            Stroke(row, C.Border)
+            local rStroke = Stroke(row, C.Border)
+            row.MouseEnter:Connect(function()
+                Tween(row, {BackgroundColor3 = C.RowHover}, 0.12)
+                Tween(rStroke, {Color = C.BorderHover}, 0.12)
+            end)
+            row.MouseLeave:Connect(function()
+                Tween(row, {BackgroundColor3 = C.RowBg}, 0.12)
+                Tween(rStroke, {Color = C.Border}, 0.12)
+            end)
+
             Card(row, UDim2.new(0, 6, 0, 6), UDim2.new(0, 8, 0.5, -3), dotCol, 3, 13)
             Txt(row, k, UDim2.new(0.65, -20, 1, 0), UDim2.new(0, 22, 0, 0), C.TextWhite, Enum.Font.Code, Enum.TextXAlignment.Left, 13)
             Txt(row, valStr, UDim2.new(0.35, -10, 1, 0), UDim2.new(0.65, 0, 0, 0), isTrue and C.Green or (isFalse and C.Red or C.Cyan), Enum.Font.Code, Enum.TextXAlignment.Right, 13)
@@ -995,7 +1372,16 @@ local function RefreshLists()
                     if fileName then
                         savedCount = savedCount + 1
                         local cfgRow = Card(SavedView, UDim2.new(1, -8, 0, 30), nil, C.RowBg, 4, 12)
-                        Stroke(cfgRow, C.Border)
+                        local cStroke = Stroke(cfgRow, C.Border)
+                        cfgRow.MouseEnter:Connect(function()
+                            Tween(cfgRow, {BackgroundColor3 = C.RowHover}, 0.12)
+                            Tween(cStroke, {Color = C.BorderHover}, 0.12)
+                        end)
+                        cfgRow.MouseLeave:Connect(function()
+                            Tween(cfgRow, {BackgroundColor3 = C.RowBg}, 0.12)
+                            Tween(cStroke, {Color = C.Border}, 0.12)
+                        end)
+
                         Txt(cfgRow, fileName, UDim2.new(1, -160, 1, 0), UDim2.new(0, 10, 0, 0), C.TextWhite, Enum.Font.GothamBold, Enum.TextXAlignment.Left, 13)
                         Btn(cfgRow, "Load", UDim2.new(0, 44, 0, 22), UDim2.new(1, -140, 0.5, -11), C.BtnBg, C.Cyan, function()
                             local cData = SafeReadFile(filePath)
@@ -1034,7 +1420,7 @@ local function RefreshLists()
     isRefreshing = false
 end
 
--- Live Value Editor with instant responsive "Set" button
+-- Live Value Editor with Animated Set Feedback
 local function PopulateEditList(query)
     for _, c in ipairs(EditScroll:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
     local rawActive = SafeReadFile(F_PATH)
@@ -1053,12 +1439,22 @@ local function PopulateEditList(query)
     for _, k in ipairs(sortedEditKeys) do
         local v = activeDict[k]
         local row = Card(EditScroll, UDim2.new(1, -8, 0, 30), nil, C.RowBg, 4, 33)
-        Stroke(row, C.Border)
+        local eStroke = Stroke(row, C.Border)
+        row.MouseEnter:Connect(function()
+            Tween(row, {BackgroundColor3 = C.RowHover}, 0.12)
+            Tween(eStroke, {Color = C.BorderHover}, 0.12)
+        end)
+        row.MouseLeave:Connect(function()
+            Tween(row, {BackgroundColor3 = C.RowBg}, 0.12)
+            Tween(eStroke, {Color = C.Border}, 0.12)
+        end)
+
         Txt(row, k, UDim2.new(1, -145, 1, 0), UDim2.new(0, 8, 0, 0), C.TextWhite, Enum.Font.Code, Enum.TextXAlignment.Left, 34)
         local valBox = Box(row, "", UDim2.new(0, 85, 0, 22), UDim2.new(1, -132, 0.5, -11), 34)
         valBox.Text = tostring(v)
         valBox.TextColor3 = C.Cyan
         
+        local setBtn = nil
         local function ApplySingleFlag()
             local newRaw = valBox.Text
             local parsedVal = newRaw
@@ -1067,19 +1463,25 @@ local function PopulateEditList(query)
             elseif low == "false" then parsedVal = false
             elseif tonumber(newRaw) ~= nil then parsedVal = tonumber(newRaw) end
             
-            -- Reload fresh dictionary from disk so other edits are never lost
             local fresh = AutoRepairJSON(SafeReadFile(F_PATH))
             fresh[k] = parsedVal
             SafeWriteFile(F_PATH, HttpService:JSONEncode(fresh))
             
-            -- Directly push flag into the engine immediately
             TrySetFlag(k, parsedVal)
+            
+            if setBtn then
+                Tween(setBtn, {BackgroundColor3 = C.Green}, 0.12)
+                task.delay(0.5, function()
+                    if setBtn and setBtn.Parent then Tween(setBtn, {BackgroundColor3 = C.Cyan}, 0.15) end
+                end)
+            end
+
             ShowToast("Set " .. k .. " -> " .. tostring(parsedVal), C.Green)
             RefreshLists()
             return parsedVal
         end
 
-        Btn(row, "Set", UDim2.new(0, 42, 0, 22), UDim2.new(1, -44, 0.5, -11), C.Cyan, Color3.fromRGB(10, 15, 20), function()
+        setBtn = Btn(row, "Set", UDim2.new(0, 42, 0, 22), UDim2.new(1, -44, 0.5, -11), C.Cyan, Color3.fromRGB(10, 15, 20), function()
             ApplySingleFlag()
         end, 34)
         
@@ -1091,9 +1493,9 @@ end
 
 EditSearchBox:GetPropertyChangedSignal("Text"):Connect(function() PopulateEditList(EditSearchBox.Text) end)
 
-OnClick(ImportBtn, function() ImportPanel.Visible = true; SaveConfigPanel.Visible = false; EditPanel.Visible = false end)
-OnClick(SaveConfigBtn, function() SaveConfigPanel.Visible = true; ImportPanel.Visible = false; EditPanel.Visible = false end)
-OnClick(EditFlagsBtn, function() EditPanel.Visible = true; ImportPanel.Visible = false; SaveConfigPanel.Visible = false; PopulateEditList(EditSearchBox.Text) end)
+OnClick(ImportBtn, function() OpenModalAnimated(ImportPanel, 440, 280); SaveConfigPanel.Visible = false; EditPanel.Visible = false end)
+OnClick(SaveConfigBtn, function() OpenModalAnimated(SaveConfigPanel, 380, 150); ImportPanel.Visible = false; EditPanel.Visible = false end)
+OnClick(EditFlagsBtn, function() OpenModalAnimated(EditPanel, 480, 340); ImportPanel.Visible = false; SaveConfigPanel.Visible = false; PopulateEditList(EditSearchBox.Text) end)
 
 OnClick(PasteClipboardBtn, function()
     local text = SafeGetClipboard()
@@ -1120,7 +1522,7 @@ OnClick(ApplyImportBtn, function()
     for k, v in pairs(parsed) do TrySetFlag(k, v) end
     _G.ShystxFlagsApplied = true
     _G.ShystxBoostEnabled = true
-    ImportPanel.Visible = false
+    CloseModalAnimated(ImportPanel, 440, 280)
     ShowToast("Imported & Applied " .. tostring(count) .. " flags!", C.Green)
     RefreshLists()
 end)
@@ -1135,7 +1537,7 @@ OnClick(ConfirmSaveBtn, function()
     parsed["SimDefaultFluidForceEnabled"] = true
     parsed["FIntSimDefaultFluidForceEnabled"] = 999
     SafeWriteFile(targetPath, HttpService:JSONEncode(parsed))
-    SaveConfigPanel.Visible = false
+    CloseModalAnimated(SaveConfigPanel, 380, 150)
     CfgNameBox.Text = ""
     ShowToast("Saved " .. cleanName, C.Green)
     RefreshLists()
@@ -1172,21 +1574,31 @@ OnClick(InjectBtn, function()
             if q then pcall(function() q(fullSource) end) end
         end))
     end)
-    ShowToast("Injected " .. tostring(count) .. " flags", C.Cyan)
+    ShowToast("Injected " .. tostring(count) .. " flags!", C.Cyan)
     RefreshLists()
 end)
 
+-- Window Exit & Minimize Animations
 local function ExitUI()
-    Tween(UiScale, {Scale = 0.01}, 0.15).Completed:Connect(function() pcall(function() ScreenGui:Destroy() end) end)
+    local tw = Tween(UiScale, {Scale = 0.01}, 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+    tw.Completed:Connect(function() pcall(function() ScreenGui:Destroy() end) end)
 end
 OnClick(ClsBtn, ExitUI)
+
+local isMinimized = false
 OnClick(MinBtn, function()
-    Main.Visible = not Main.Visible
-    if not Main.Visible then
-        ImportPanel.Visible = false; SaveConfigPanel.Visible = false; EditPanel.Visible = false
+    isMinimized = not isMinimized
+    if isMinimized then
+        ImportPanel.Visible = false
+        SaveConfigPanel.Visible = false
+        EditPanel.Visible = false
+        Tween(Main, {Size = UDim2.new(0, 480, 0, 36)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    else
+        Tween(Main, {Size = UDim2.new(0, 480, 0, 360)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     end
 end)
 
+-- Smooth Window Dragging
 local drag, dInput, dStart, sPos = false, nil, nil, nil
 TopBar.InputBegan:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
@@ -1200,7 +1612,8 @@ end)
 UserInputService.InputChanged:Connect(function(inp)
     if inp == dInput and drag then
         local delta = inp.Position - dStart
-        Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / math.max(UiScale.Scale, 0.01)), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / math.max(UiScale.Scale, 0.01)))
+        local scale = math.max(UiScale.Scale, 0.01)
+        Main.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + (delta.X / scale), sPos.Y.Scale, sPos.Y.Offset + (delta.Y / scale))
     end
 end)
 UserInputService.InputEnded:Connect(function(inp)
