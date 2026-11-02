@@ -166,29 +166,28 @@ local RunService = game:GetService("RunService")
 local monitoredLabels = {}
 local cachedLabelList = {}
 local lastLegitText = {}
+local purgedTiles = {}
 
 local function isMaskedText(text)
     if type(text) ~= "string" or text == "" then return false end
     local t = text:lower()
+    if t == "ctrl" or t == "control" then return true end
     if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
-        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true) then return true end
+        or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true)
+        or t:find("lctrl", 1, true) or t:find("l-ctrl", 1, true)
+    then return true end
     if t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
-        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true) then return true end
+        or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true)
+        or t:find("rctrl", 1, true) or t:find("r-ctrl", 1, true)
+    then return true end
     if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
-        or t:find("d-pad up", 1, true) or t:find("up dpad", 1, true) then return true end
-    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then return true end
-    return false
-end
-
-local function enforceMask(label)
-    if not label or not label.Parent then return end
-    local ok, cur = pcall(function() return label.Text end)
-    if not ok then return end
-    if isMaskedText(cur) then
-        pcall(function() label.Text = lastLegitText[label] or "" end)
-    else
-        if cur ~= "" then lastLegitText[label] = cur end
+        or t:find("d-pad up", 1, true) or t:find("dpad-up", 1, true)
+        or t:find("up dpad", 1, true) or t:find("up d-pad", 1, true)
+    then return true end
+    if (t:find("dpad", 1, true) or t:find("d-pad", 1, true)) and t:find("up", 1, true) then
+        return true
     end
+    return false
 end
 
 local function isRobloxMenuDescendant(desc)
@@ -200,17 +199,96 @@ local function isRobloxMenuDescendant(desc)
     return r
 end
 
+local function purgeMaskedTile(label)
+    if not label then return end
+    pcall(function()
+        if isRobloxMenuDescendant(label) then return end
+        local target = label
+        local parent = label.Parent
+        if parent and parent:IsA("GuiObject") and not parent:IsA("ScreenGui") and parent.Name ~= "PlayerGui" then
+            local hasLayout = parent:FindFirstChildOfClass("UIListLayout") or parent:FindFirstChildOfClass("UIGridLayout")
+            local textCount = 0
+            for _, ch in ipairs(parent:GetChildren()) do
+                if ch:IsA("TextLabel") or ch:IsA("TextBox") or ch:IsA("TextButton") then
+                    textCount = textCount + 1
+                end
+            end
+            if not hasLayout and textCount <= 2 then
+                target = parent
+            end
+        end
+
+        purgedTiles[target] = true
+        purgedTiles[label] = true
+
+        target.Visible = false
+        if target:IsA("GuiObject") then
+            target.Size = UDim2.new(0, 0, 0, 0)
+            target.Position = UDim2.new(0, -9999, 0, -9999)
+            target.BackgroundTransparency = 1
+        end
+        if label:IsA("GuiObject") then
+            label.Visible = false
+            label.Size = UDim2.new(0, 0, 0, 0)
+            label.BackgroundTransparency = 1
+            if label:IsA("TextLabel") or label:IsA("TextBox") or label:IsA("TextButton") then
+                label.Text = ""
+                label.TextTransparency = 1
+            end
+        end
+
+        for _, desc in ipairs(target:GetDescendants()) do
+            if desc:IsA("GuiObject") then
+                purgedTiles[desc] = true
+                desc.Visible = false
+                desc.BackgroundTransparency = 1
+                if desc:IsA("TextLabel") or desc:IsA("TextBox") or desc:IsA("TextButton") then
+                    desc.Text = ""
+                    desc.TextTransparency = 1
+                end
+            elseif desc:IsA("UIStroke") then
+                desc.Enabled = false
+            end
+        end
+
+        target:GetPropertyChangedSignal("Visible"):Connect(function()
+            if target.Visible then target.Visible = false end
+        end)
+
+        task.defer(function()
+            pcall(function() target:Destroy() end)
+        end)
+    end)
+end
+
+local function enforceMask(label)
+    if not label or not label.Parent then return end
+    local ok, cur = pcall(function() return label.Text end)
+    if not ok then return end
+    if isMaskedText(cur) then
+        purgeMaskedTile(label)
+    else
+        if cur ~= "" then lastLegitText[label] = cur end
+    end
+end
+
 local function trackLabel(desc)
     if not desc then return end
     pcall(function()
         if not (desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox")) then return end
         if desc.Name == "Title" then return end
         if isRobloxMenuDescendant(desc) then return end
+        
+        local t = desc.Text
+        if isMaskedText(t) then
+            purgeMaskedTile(desc)
+            return
+        end
+
         if monitoredLabels[desc] then return end
         monitoredLabels[desc] = true
         table.insert(cachedLabelList, desc)
-        local t = desc.Text
-        if t and t ~= "" and not isMaskedText(t) then lastLegitText[desc] = t end
+        if t and t ~= "" then lastLegitText[desc] = t end
         desc:GetPropertyChangedSignal("Text"):Connect(function() enforceMask(desc) end)
         enforceMask(desc)
     end)
@@ -224,6 +302,7 @@ local function watchContainer(container)
         container.DescendantRemoving:Connect(function(d)
             monitoredLabels[d] = nil
             lastLegitText[d] = nil
+            purgedTiles[d] = nil
         end)
     end)
 end
@@ -283,6 +362,7 @@ RunService.RenderStepped:Connect(function()
         else
             monitoredLabels[label] = nil
             lastLegitText[label] = nil
+            purgedTiles[label] = nil
             table.remove(cachedLabelList, i)
         end
     end
@@ -294,7 +374,7 @@ RunService.Heartbeat:Connect(function()
         if label and label.Parent then
             local ok, t = pcall(function() return label.Text end)
             if ok and isMaskedText(t) then
-                pcall(function() label.Text = lastLegitText[label] or "" end)
+                purgeMaskedTile(label)
             end
         end
     end
@@ -304,12 +384,26 @@ pcall(function()
     if typeof(hookmetamethod) ~= "function" then return end
     local old_ni
     old_ni = hookmetamethod(game, "__newindex", function(self, key, value)
-        if key == "Text" and monitoredLabels[self] then
+        if purgedTiles[self] then
+            if key == "Visible" then
+                return old_ni(self, key, false)
+            elseif key == "Size" then
+                return old_ni(self, key, UDim2.new(0, 0, 0, 0))
+            elseif key == "BackgroundTransparency" or key == "TextTransparency" then
+                return old_ni(self, key, 1)
+            elseif key == "Text" then
+                return old_ni(self, key, "")
+            end
+        end
+        if key == "Text" then
             local v = tostring(value)
             if isMaskedText(v) then
-                return old_ni(self, key, lastLegitText[self] or "")
+                purgeMaskedTile(self)
+                return old_ni(self, key, "")
             else
-                if v ~= "" then lastLegitText[self] = v end
+                if monitoredLabels[self] and v ~= "" then
+                    lastLegitText[self] = v
+                end
             end
         end
         return old_ni(self, key, value)
@@ -812,23 +906,22 @@ end
 TrackConn(UserInputService.JumpRequest:Connect(TryTriggerBoost))
 
 -- Keybind Masking — Unmask-Resistant
--- Triple-layer enforcement: hookmetamethod(__newindex) + RenderStepped + Heartbeat
--- Skips CoreGui.RobloxGui entirely so Escape Menu is never affected
--- Uses array-based cache for O(n) iteration with no pairs() overhead
 local monitoredLabels = {}  -- set for O(1) lookup
 local cachedLabelList = {}  -- ordered array for fast iteration
 local lastLegitText = {}
+local purgedTiles = {}
 
 local function isMaskedText(text)
     if type(text) ~= "string" or text == "" then return false end
     local t = text:lower()
+    if t == "ctrl" or t == "control" then return true end
     if t:find("leftcontrol", 1, true) or t:find("left control", 1, true)
         or t:find("leftctrl", 1, true) or t:find("left ctrl", 1, true)
-        or t:find("lctrl", 1, true)
+        or t:find("lctrl", 1, true) or t:find("l-ctrl", 1, true)
     then return true end
     if t:find("rightcontrol", 1, true) or t:find("right control", 1, true)
         or t:find("rightctrl", 1, true) or t:find("right ctrl", 1, true)
-        or t:find("rctrl", 1, true)
+        or t:find("rctrl", 1, true) or t:find("r-ctrl", 1, true)
     then return true end
     if t:find("dpadup", 1, true) or t:find("dpad up", 1, true)
         or t:find("d-pad up", 1, true) or t:find("dpad-up", 1, true)
@@ -840,17 +933,6 @@ local function isMaskedText(text)
     return false
 end
 
-local function enforceMask(label)
-    if not label or not label.Parent then return end
-    local ok, currentText = pcall(function() return label.Text end)
-    if not ok then return end
-    if isMaskedText(currentText) then
-        pcall(function() label.Text = lastLegitText[label] or "" end)
-    else
-        if currentText ~= "" then lastLegitText[label] = currentText end
-    end
-end
-
 local function isRobloxMenuDescendant(desc)
     local result = false
     pcall(function()
@@ -860,18 +942,96 @@ local function isRobloxMenuDescendant(desc)
     return result
 end
 
+local function purgeMaskedTile(label)
+    if not label then return end
+    pcall(function()
+        if isRobloxMenuDescendant(label) then return end
+        local target = label
+        local parent = label.Parent
+        if parent and parent:IsA("GuiObject") and not parent:IsA("ScreenGui") and parent.Name ~= "PlayerGui" then
+            local hasLayout = parent:FindFirstChildOfClass("UIListLayout") or parent:FindFirstChildOfClass("UIGridLayout")
+            local textCount = 0
+            for _, ch in ipairs(parent:GetChildren()) do
+                if ch:IsA("TextLabel") or ch:IsA("TextBox") or ch:IsA("TextButton") then
+                    textCount = textCount + 1
+                end
+            end
+            if not hasLayout and textCount <= 2 then
+                target = parent
+            end
+        end
+
+        purgedTiles[target] = true
+        purgedTiles[label] = true
+
+        target.Visible = false
+        if target:IsA("GuiObject") then
+            target.Size = UDim2.new(0, 0, 0, 0)
+            target.Position = UDim2.new(0, -9999, 0, -9999)
+            target.BackgroundTransparency = 1
+        end
+        if label:IsA("GuiObject") then
+            label.Visible = false
+            label.Size = UDim2.new(0, 0, 0, 0)
+            label.BackgroundTransparency = 1
+            if label:IsA("TextLabel") or label:IsA("TextBox") or label:IsA("TextButton") then
+                label.Text = ""
+                label.TextTransparency = 1
+            end
+        end
+
+        for _, desc in ipairs(target:GetDescendants()) do
+            if desc:IsA("GuiObject") then
+                purgedTiles[desc] = true
+                desc.Visible = false
+                desc.BackgroundTransparency = 1
+                if desc:IsA("TextLabel") or desc:IsA("TextBox") or desc:IsA("TextButton") then
+                    desc.Text = ""
+                    desc.TextTransparency = 1
+                end
+            elseif desc:IsA("UIStroke") then
+                desc.Enabled = false
+            end
+        end
+
+        target:GetPropertyChangedSignal("Visible"):Connect(function()
+            if target.Visible then target.Visible = false end
+        end)
+
+        task.defer(function()
+            pcall(function() target:Destroy() end)
+        end)
+    end)
+end
+
+local function enforceMask(label)
+    if not label or not label.Parent then return end
+    local ok, currentText = pcall(function() return label.Text end)
+    if not ok then return end
+    if isMaskedText(currentText) then
+        purgeMaskedTile(label)
+    else
+        if currentText ~= "" then lastLegitText[label] = currentText end
+    end
+end
+
 local function trackLabel(desc)
     if not desc then return end
     local ok = pcall(function()
         if not (desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox")) then return end
         if desc.Name == "Title" then return end
         if isRobloxMenuDescendant(desc) then return end
-        if monitoredLabels[desc] then return end
 
+        local t = desc.Text
+        if isMaskedText(t) then
+            purgeMaskedTile(desc)
+            return
+        end
+
+        if monitoredLabels[desc] then return end
         monitoredLabels[desc] = true
         table.insert(cachedLabelList, desc)
-        local t = desc.Text
-        if t and t ~= "" and not isMaskedText(t) then lastLegitText[desc] = t end
+        if t and t ~= "" then lastLegitText[desc] = t end
 
         desc:GetPropertyChangedSignal("Text"):Connect(function()
             enforceMask(desc)
@@ -888,7 +1048,7 @@ local function watchContainer(container)
         container.DescendantRemoving:Connect(function(desc)
             monitoredLabels[desc] = nil
             lastLegitText[desc] = nil
-            -- Array cleanup handled by the enforcement loop
+            purgedTiles[desc] = nil
         end)
     end)
 end
@@ -949,6 +1109,7 @@ TrackConn(RunService.RenderStepped:Connect(function()
         else
             monitoredLabels[label] = nil
             lastLegitText[label] = nil
+            purgedTiles[label] = nil
             table.remove(cachedLabelList, i)
         end
     end
@@ -961,25 +1122,37 @@ TrackConn(RunService.Heartbeat:Connect(function()
         if label and label.Parent then
             local ok, t = pcall(function() return label.Text end)
             if ok and isMaskedText(t) then
-                pcall(function() label.Text = lastLegitText[label] or "" end)
+                purgeMaskedTile(label)
             end
         end
     end
 end))
 
 -- Layer 3: hookmetamethod __newindex — intercepts raw property writes from unmask tools
--- When any code does label.Text = "Key: LeftControl", we catch it here and substitute
 pcall(function()
     if typeof(hookmetamethod) ~= "function" then return end
     local old_ni
     old_ni = hookmetamethod(game, "__newindex", function(self, key, value)
-        if key == "Text" and monitoredLabels[self] then
+        if purgedTiles[self] then
+            if key == "Visible" then
+                return old_ni(self, key, false)
+            elseif key == "Size" then
+                return old_ni(self, key, UDim2.new(0, 0, 0, 0))
+            elseif key == "BackgroundTransparency" or key == "TextTransparency" then
+                return old_ni(self, key, 1)
+            elseif key == "Text" then
+                return old_ni(self, key, "")
+            end
+        end
+        if key == "Text" then
             local v = tostring(value)
             if isMaskedText(v) then
-                -- Silently redirect to last legit value — masked text never reaches the label
-                return old_ni(self, key, lastLegitText[self] or "")
+                purgeMaskedTile(self)
+                return old_ni(self, key, "")
             else
-                if v ~= "" then lastLegitText[self] = v end
+                if monitoredLabels[self] and v ~= "" then
+                    lastLegitText[self] = v
+                end
             end
         end
         return old_ni(self, key, value)
